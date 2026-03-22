@@ -1,0 +1,7 @@
+name,unit,labor_hours,material_price,description
+Wandanstrich Innen (weiß),m²,0.25,4.50,Standard Innenanstrich mit Dispersionsfarbe inkl. Abkleben
+Fassadenanstrich (Silikonharz),m²,0.45,8.20,Hochwertiger Außenanstrich wetterbeständig
+Tapezieren (Raufaser),m²,0.60,3.50,Anbringen von Raufasertapete inkl. Kleister
+Grundierung (Tiefgrund),m²,0.10,1.50,Vorbereitung des Untergrunds für Folgeanstriche
+Spachtelarbeiten (Q2),m²,0.35,2.80,Oberflächenspachtelung für normale optische Anforderungen
+Lackieren (Türen/Zargen),Stk,1.50,12.00,Lackierung von Innentüren inkl. Vorarbeiten

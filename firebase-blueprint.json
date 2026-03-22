@@ -1,0 +1,76 @@
+{
+  "entities": {
+    "Trade": {
+      "title": "Trade",
+      "description": "A craft trade (e.g., Maler, Elektriker)",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "LaborRate": {
+      "title": "Labor Rate",
+      "description": "Hourly rate for a specific worker type in a trade",
+      "type": "object",
+      "properties": {
+        "trade_id": { "type": "string" },
+        "worker_type": { "type": "string", "enum": ["Meister", "Geselle", "Helfer"] },
+        "hourly_rate": { "type": "number" }
+      },
+      "required": ["trade_id", "worker_type", "hourly_rate"]
+    },
+    "ServiceItem": {
+      "title": "Service Item",
+      "description": "A specific service position in the catalog",
+      "type": "object",
+      "properties": {
+        "trade_id": { "type": "string" },
+        "name": { "type": "string" },
+        "unit": { "type": "string" },
+        "labor_hours": { "type": "number" },
+        "material_price": { "type": "number" },
+        "description": { "type": "string" }
+      },
+      "required": ["trade_id", "name", "unit", "labor_hours", "material_price"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "A customer project for which quotes are generated",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "customer_name": { "type": "string" },
+        "customer_address": { "type": "string" },
+        "status": { "type": "string", "enum": ["Entwurf", "Abgeschlossen"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "uid": { "type": "string" }
+      },
+      "required": ["name", "uid"]
+    },
+    "QuoteItem": {
+      "title": "Quote Item",
+      "description": "A specific position added to a project's quote",
+      "type": "object",
+      "properties": {
+        "project_id": { "type": "string" },
+        "trade_id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "unit": { "type": "string" },
+        "quantity": { "type": "number" },
+        "labor_hours_per_unit": { "type": "number" },
+        "material_price_per_unit": { "type": "number" }
+      },
+      "required": ["project_id", "trade_id", "name", "quantity"]
+    }
+  },
+  "firestore": {
+    "/trades": { "schema": "Trade", "description": "Global list of trades" },
+    "/labor_rates": { "schema": "LaborRate", "description": "Global labor rates" },
+    "/service_items": { "schema": "ServiceItem", "description": "Global service catalog" },
+    "/projects": { "schema": "Project", "description": "User projects" },
+    "/projects/{projectId}/items": { "schema": "QuoteItem", "description": "Items within a project" }
+  }
+}

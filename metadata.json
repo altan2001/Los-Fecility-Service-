@@ -1,0 +1,5 @@
+{
+  "name": "Los Facility Service",
+  "description": "Bausanierung und Renovierung - Ihr Partner für hochwertige Renovierungsarbeiten. Los Facility Service.",
+  "requestFramePermissions": ["camera"]
+}

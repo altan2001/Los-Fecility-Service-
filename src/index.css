@@ -1,0 +1,53 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-brand-primary: #2563eb;        /* Blue 600 */
+  --color-brand-primary-light: #60a5fa;  /* Blue 400 */
+  --color-brand-primary-dark: #1e40af;   /* Blue 800 */
+  
+  --color-brand-secondary: #10b981;      /* Emerald 500 */
+  --color-brand-secondary-light: #6ee7b7;/* Emerald 300 */
+  --color-brand-secondary-dark: #065f46; /* Emerald 800 */
+  
+  --color-brand-dark: #0f172a;           /* Slate 900 */
+  --color-brand-dark-light: #334155;     /* Slate 700 */
+  --color-brand-dark-dark: #020617;      /* Slate 950 */
+  
+  --color-brand-paper: #ffffff;          /* Pure White */
+  --color-brand-accent: #f0f9ff;         /* Very light blue for backgrounds */
+
+  @keyframes bounce-subtle {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-2px); }
+  }
+  --animate-bounce-subtle: bounce-subtle 2s ease-in-out infinite;
+}
+
+@layer base {
+  body {
+    @apply bg-brand-paper text-brand-dark antialiased;
+  }
+}
+
+.glass-card {
+  @apply bg-white/80 backdrop-blur-md border border-white/20 shadow-sm;
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+
+/* Main Navigation Customization */
+#main-nav {
+  @apply transition-all duration-500 ease-in-out;
+}
+
+#main-nav[data-scrolled="true"] {
+  /* Optimized background and shadow for better visibility and modern feel */
+  background-color: rgba(255, 255, 255, 0.92); 
+  @apply backdrop-blur-xl shadow-lg border-b border-slate-200/40;
+}
