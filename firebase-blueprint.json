@@ -1,12 +1,46 @@
 {
   "entities": {
-    "Trade": {
-      "title": "Trade",
-      "description": "A craft trade (e.g., Maler, Elektriker)",
+    "User": {
+      "title": "User",
+      "description": "System user profile",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "role": { "type": "string" },
+        "first_name": { "type": "string" },
+        "last_name": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "google_id": { "type": "string" },
+        "email_verified": { "type": "boolean" },
+        "phone_verified": { "type": "boolean" },
+        "free_offers_used": { "type": "integer" },
+        "reset_token": { "type": "string" },
+        "reset_token_expiry": { "type": "string", "format": "date-time" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "role"]
+    },
+    "UserRole": {
+      "title": "User Role",
+      "description": "Role permissions definition",
       "type": "object",
       "properties": {
         "name": { "type": "string" },
-        "description": { "type": "string" }
+        "permissions": { "type": "string", "description": "JSON string of permissions" }
+      },
+      "required": ["name"]
+    },
+    "Trade": {
+      "title": "Trade",
+      "description": "Handicraft trade category",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "is_anlage_a": { "type": "boolean" }
       },
       "required": ["name"]
     },
@@ -15,62 +49,295 @@
       "description": "Hourly rate for a specific worker type in a trade",
       "type": "object",
       "properties": {
-        "trade_id": { "type": "string" },
         "worker_type": { "type": "string", "enum": ["Meister", "Geselle", "Helfer"] },
         "hourly_rate": { "type": "number" }
       },
-      "required": ["trade_id", "worker_type", "hourly_rate"]
+      "required": ["worker_type", "hourly_rate"]
     },
     "ServiceItem": {
       "title": "Service Item",
-      "description": "A specific service position in the catalog",
+      "description": "Standard service position",
       "type": "object",
       "properties": {
-        "trade_id": { "type": "string" },
         "name": { "type": "string" },
         "unit": { "type": "string" },
         "labor_hours": { "type": "number" },
         "material_price": { "type": "number" },
-        "description": { "type": "string" }
+        "description": { "type": "string" },
+        "sort_order": { "type": "integer" }
       },
-      "required": ["trade_id", "name", "unit", "labor_hours", "material_price"]
+      "required": ["name", "unit"]
     },
-    "Project": {
-      "title": "Project",
-      "description": "A customer project for which quotes are generated",
+    "Media": {
+      "title": "Media",
+      "description": "CMS media assets",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["image", "video"] },
+        "url": { "type": "string" },
+        "category": { "type": "string", "enum": ["hero", "service", "gallery"] },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "sort_order": { "type": "integer" }
+      },
+      "required": ["type", "url"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Customer contact information",
       "type": "object",
       "properties": {
         "name": { "type": "string" },
+        "company": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "notes": { "type": "string" },
+        "category": { "type": "string", "enum": ["Privat", "Gewerblich", "Öffentlich"] },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name"]
+    },
+    "CommunicationLog": {
+      "title": "Communication Log",
+      "description": "Log of interactions with a customer",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["Call", "Email", "Meeting", "Note"] },
+        "content": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" }
+      },
+      "required": ["type", "content"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "Construction project or quote",
+      "type": "object",
+      "properties": {
+        "customer_id": { "type": "string" },
+        "name": { "type": "string" },
         "customer_name": { "type": "string" },
         "customer_address": { "type": "string" },
-        "status": { "type": "string", "enum": ["Entwurf", "Abgeschlossen"] },
+        "craftsman_name": { "type": "string" },
+        "craftsman_contact": { "type": "string" },
+        "status": { "type": "string", "enum": ["Entwurf", "Angebot", "Auftrag", "In Arbeit", "Abgeschlossen", "Storniert"] },
+        "currency": { "type": "string" },
+        "tax_rate": { "type": "number" },
+        "terms_and_conditions": { "type": "string" },
+        "site_setup_enabled": { "type": "boolean" },
+        "site_setup_price": { "type": "number" },
         "created_at": { "type": "string", "format": "date-time" },
-        "uid": { "type": "string" }
+        "updated_at": { "type": "string", "format": "date-time" }
       },
-      "required": ["name", "uid"]
+      "required": ["name", "status"]
     },
     "QuoteItem": {
       "title": "Quote Item",
-      "description": "A specific position added to a project's quote",
+      "description": "Specific position in a project quote",
       "type": "object",
       "properties": {
-        "project_id": { "type": "string" },
+        "service_item_id": { "type": "string" },
         "trade_id": { "type": "string" },
         "name": { "type": "string" },
         "description": { "type": "string" },
         "unit": { "type": "string" },
         "quantity": { "type": "number" },
+        "length": { "type": "number" },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "depth": { "type": "number" },
         "labor_hours_per_unit": { "type": "number" },
-        "material_price_per_unit": { "type": "number" }
+        "material_price_per_unit": { "type": "number" },
+        "sketch_data": { "type": "string" },
+        "special_attributes": { "type": "string" },
+        "completion": { "type": "integer" },
+        "sort_order": { "type": "integer" }
       },
-      "required": ["project_id", "trade_id", "name", "quantity"]
+      "required": ["name", "unit", "quantity"]
+    },
+    "QuoteItemLabor": {
+      "title": "Quote Item Labor",
+      "description": "Labor details for a quote item",
+      "type": "object",
+      "properties": {
+        "worker_type": { "type": "string", "enum": ["Meister", "Geselle", "Helfer"] },
+        "hourly_rate": { "type": "number" },
+        "quantity": { "type": "integer" },
+        "time_value": { "type": "number" },
+        "time_unit": { "type": "string", "enum": ["Hours", "Days", "Weeks", "Months"] }
+      },
+      "required": ["worker_type", "hourly_rate", "quantity", "time_value", "time_unit"]
+    },
+    "ConstructionDiary": {
+      "title": "Construction Diary",
+      "description": "Daily report for a project",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date" },
+        "weather": { "type": "string" },
+        "temperature": { "type": "number" },
+        "work_done": { "type": "string" },
+        "notes": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["date"]
+    },
+    "DiaryPresence": {
+      "title": "Diary Presence",
+      "description": "Personnel present on site",
+      "type": "object",
+      "properties": {
+        "person_name": { "type": "string" },
+        "role": { "type": "string" },
+        "hours": { "type": "number" }
+      },
+      "required": ["person_name", "hours"]
+    },
+    "DiaryAttachment": {
+      "title": "Diary Attachment",
+      "description": "Files attached to a diary entry",
+      "type": "object",
+      "properties": {
+        "file_path": { "type": "string" },
+        "file_name": { "type": "string" },
+        "file_type": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["file_path", "file_name"]
+    },
+    "ChangeOrder": {
+      "title": "Change Order",
+      "description": "Project change request",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "amount": { "type": "number" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "status"]
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "description": "Project invoice",
+      "type": "object",
+      "properties": {
+        "invoice_number": { "type": "string" },
+        "type": { "type": "string", "enum": ["Abschlagsrechnung", "Schlussrechnung", "Rechnung"] },
+        "status": { "type": "string", "enum": ["draft", "sent", "paid"] },
+        "amount": { "type": "number" },
+        "due_date": { "type": "string", "format": "date" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["invoice_number", "type", "status"]
+    },
+    "ProjectImage": {
+      "title": "Project Image",
+      "description": "Images associated with a project",
+      "type": "object",
+      "properties": {
+        "url": { "type": "string" },
+        "title": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["url"]
+    },
+    "Subscription": {
+      "title": "Subscription",
+      "description": "User subscription details",
+      "type": "object",
+      "properties": {
+        "stripe_customer_id": { "type": "string" },
+        "stripe_subscription_id": { "type": "string" },
+        "plan_id": { "type": "string", "enum": ["free", "pro", "enterprise"] },
+        "status": { "type": "string", "enum": ["active", "canceled", "past_due"] },
+        "current_period_end": { "type": "string", "format": "date-time" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["plan_id", "status"]
     }
   },
   "firestore": {
-    "/trades": { "schema": "Trade", "description": "Global list of trades" },
-    "/labor_rates": { "schema": "LaborRate", "description": "Global labor rates" },
-    "/service_items": { "schema": "ServiceItem", "description": "Global service catalog" },
-    "/projects": { "schema": "Project", "description": "User projects" },
-    "/projects/{projectId}/items": { "schema": "QuoteItem", "description": "Items within a project" }
+    "users": {
+      "schema": "User",
+      "description": "Collection of system users"
+    },
+    "users/{userId}/subscriptions": {
+      "schema": "Subscription",
+      "description": "Subcollection of user subscriptions"
+    },
+    "user_roles": {
+      "schema": "UserRole",
+      "description": "Collection of role definitions"
+    },
+    "trades": {
+      "schema": "Trade",
+      "description": "Collection of available trades"
+    },
+    "trades/{tradeId}/labor_rates": {
+      "schema": "LaborRate",
+      "description": "Subcollection of labor rates for a trade"
+    },
+    "trades/{tradeId}/service_items": {
+      "schema": "ServiceItem",
+      "description": "Subcollection of standard service items for a trade"
+    },
+    "customers": {
+      "schema": "Customer",
+      "description": "Collection of customers"
+    },
+    "customers/{customerId}/communication_logs": {
+      "schema": "CommunicationLog",
+      "description": "Subcollection of communication logs for a customer"
+    },
+    "projects": {
+      "schema": "Project",
+      "description": "Collection of projects"
+    },
+    "projects/{projectId}/quote_items": {
+      "schema": "QuoteItem",
+      "description": "Subcollection of items for a project quote"
+    },
+    "projects/{projectId}/quote_items/{itemId}/labor": {
+      "schema": "QuoteItemLabor",
+      "description": "Subcollection of labor details for a quote item"
+    },
+    "projects/{projectId}/diaries": {
+      "schema": "ConstructionDiary",
+      "description": "Subcollection of daily reports for a project"
+    },
+    "projects/{projectId}/diaries/{diaryId}/presence": {
+      "schema": "DiaryPresence",
+      "description": "Subcollection of personnel presence for a diary entry"
+    },
+    "projects/{projectId}/diaries/{diaryId}/attachments": {
+      "schema": "DiaryAttachment",
+      "description": "Subcollection of attachments for a diary entry"
+    },
+    "projects/{projectId}/change_orders": {
+      "schema": "ChangeOrder",
+      "description": "Subcollection of change orders for a project"
+    },
+    "projects/{projectId}/invoices": {
+      "schema": "Invoice",
+      "description": "Subcollection of invoices for a project"
+    },
+    "projects/{projectId}/images": {
+      "schema": "ProjectImage",
+      "description": "Subcollection of images for a project"
+    },
+    "media": {
+      "schema": "Media",
+      "description": "CMS media assets"
+    },
+    "content": {
+      "schema": { "type": "object", "properties": { "value": { "type": "string" } } },
+      "description": "CMS content key-value pairs"
+    },
+    "settings": {
+      "schema": { "type": "object", "properties": { "value": { "type": "string" } } },
+      "description": "Global system settings"
+    }
   }
 }

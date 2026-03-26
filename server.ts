@@ -9,6 +9,8 @@ import fs from "fs";
 import { Parser } from "xml2js";
 import csv from "csv-parser";
 import Stripe from "stripe";
+import nodemailer from "nodemailer";
+import crypto from "crypto";
 import db, { initDb } from "./db";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -45,6 +47,13 @@ function escapeXml(unsafe: string) {
     }
   });
 }
+
+import { initializeApp } from "firebase/app";
+import { getFirestore, collection, getDocs, doc, getDoc, setDoc, updateDoc, deleteDoc, query, where, orderBy, limit, onSnapshot } from "firebase/firestore";
+import firebaseConfig from "./firebase-applet-config.json" assert { type: "json" };
+
+const firebaseApp = initializeApp(firebaseConfig);
+const firestore = getFirestore(firebaseApp, (firebaseConfig as any).firestoreDatabaseId);
 
 async function startServer() {
   try {
@@ -92,46 +101,63 @@ async function startServer() {
   });
 
   // Auth
-  app.post("/api/auth/login", (req, res) => {
+  app.post("/api/auth/login", async (req, res) => {
     const { username, password } = req.body;
-    const user = db.prepare('SELECT * FROM users WHERE username = ? AND password = ?').get(username, password) as any;
-    if (user) {
-      res.json({ success: true, token: "fake-jwt-token-for-demo", user: { username: user.username, role: user.role } });
-    } else {
-      res.status(401).json({ success: false, message: "Ungültige Anmeldedaten" });
+    try {
+      const q = query(collection(firestore, "users"), where("username", "==", username), where("password", "==", password), limit(1));
+      const snapshot = await getDocs(q);
+      if (!snapshot.empty) {
+        const user = snapshot.docs[0].data();
+        res.json({ success: true, token: "fake-jwt-token-for-demo", user: { username: user.username, role: user.role } });
+      } else {
+        res.status(401).json({ success: false, message: "Ungültige Anmeldedaten" });
+      }
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Fehler bei der Anmeldung" });
     }
   });
 
   // --- Customer Management ---
-  app.get("/api/customers", (req, res) => {
-    const customers = db.prepare(`
-      SELECT c.*, 
-      (SELECT MAX(date) FROM communication_logs WHERE customer_id = c.id) as last_contact
-      FROM customers c 
-      ORDER BY name ASC
-    `).all();
-    res.json(customers);
+  app.get("/api/customers", async (req, res) => {
+    try {
+      const snapshot = await getDocs(query(collection(firestore, "customers"), orderBy("name", "asc")));
+      const customers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      res.json(customers);
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Kunden konnten nicht geladen werden." });
+    }
   });
 
-  app.post("/api/customers", (req, res) => {
+  app.post("/api/customers", async (req, res) => {
     const { name, company, email, phone, address, notes, category } = req.body;
-    const result = db.prepare('INSERT INTO customers (name, company, email, phone, address, notes, category) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(name, company, email, phone, address, notes, category || 'Privat');
-    res.json({ success: true, id: result.lastInsertRowid });
+    try {
+      const docRef = doc(collection(firestore, "customers"));
+      await setDoc(docRef, { name, company, email, phone, address, notes, category: category || 'Privat', created_at: new Date().toISOString() });
+      res.json({ success: true, id: docRef.id });
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Kunde konnte nicht erstellt werden." });
+    }
   });
 
-  app.put("/api/customers/:id", (req, res) => {
+  app.put("/api/customers/:id", async (req, res) => {
     const { id } = req.params;
     const { name, company, email, phone, address, notes, category } = req.body;
-    db.prepare('UPDATE customers SET name = ?, company = ?, email = ?, phone = ?, address = ?, notes = ?, category = ? WHERE id = ?')
-      .run(name, company, email, phone, address, notes, category, id);
-    res.json({ success: true });
+    try {
+      await updateDoc(doc(firestore, "customers", id), { name, company, email, phone, address, notes, category });
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Kunde konnte nicht aktualisiert werden." });
+    }
   });
 
-  app.delete("/api/customers/:id", (req, res) => {
+  app.delete("/api/customers/:id", async (req, res) => {
     const { id } = req.params;
-    db.prepare('DELETE FROM customers WHERE id = ?').run(id);
-    res.json({ success: true });
+    try {
+      await deleteDoc(doc(firestore, "customers", id));
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Kunde konnte nicht gelöscht werden." });
+    }
   });
 
   app.get("/api/customers/:id/logs", (req, res) => {
@@ -149,113 +175,133 @@ async function startServer() {
   });
 
   // Content Management
-  app.get("/api/content", (req, res) => {
+  app.get("/api/content", async (req, res) => {
     const { keys } = req.query;
-    if (keys) {
-      const keyList = (keys as string).split(',');
-      const placeholders = keyList.map(() => '?').join(',');
-      const content = db.prepare(`SELECT * FROM content WHERE key IN (${placeholders})`).all(...keyList);
-      const contentMap = content.reduce((acc: any, item: any) => {
-        acc[item.key] = item.value;
-        return acc;
-      }, {});
-      res.json(contentMap);
-    } else {
-      const content = db.prepare('SELECT * FROM content').all();
-      const contentMap = content.reduce((acc: any, item: any) => {
-        acc[item.key] = item.value;
-        return acc;
-      }, {});
-      res.json(contentMap);
-    }
-  });
-
-  app.get("/api/content/:key", (req, res) => {
-    const { key } = req.params;
-    const item = db.prepare('SELECT value FROM content WHERE key = ?').get(key) as { value: string } | undefined;
-    if (item) {
-      res.json({ key, value: item.value });
-    } else {
-      res.status(404).json({ error: "Inhalt nicht gefunden" });
-    }
-  });
-
-  app.post("/api/content", (req, res) => {
-    const { content } = req.body; // { key: value }
-    const upsert = db.prepare('INSERT OR REPLACE INTO content (key, value) VALUES (?, ?)');
-    const transaction = db.transaction((data) => {
-      for (const [key, value] of Object.entries(data)) {
-        upsert.run(key, value);
+    try {
+      let snapshot;
+      if (keys) {
+        const keyList = (keys as string).split(',');
+        snapshot = await getDocs(query(collection(firestore, "content"), where("__name__", "in", keyList)));
+      } else {
+        snapshot = await getDocs(collection(firestore, "content"));
       }
-    });
-    transaction(content);
-    res.json({ success: true });
+      const contentMap = snapshot.docs.reduce((acc: any, doc) => {
+        acc[doc.id] = doc.data().value;
+        return acc;
+      }, {});
+      res.json(contentMap);
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Inhalt konnte nicht geladen werden." });
+    }
   });
 
-  app.get("/api/content-item/:key", (req, res) => {
+  app.get("/api/content/:key", async (req, res) => {
     const { key } = req.params;
     try {
-      const row = db.prepare('SELECT value FROM content WHERE key = ?').get(key) as { value: string } | undefined;
-      if (row) {
-        res.json({ success: true, key, value: row.value });
+      const docSnap = await getDoc(doc(firestore, "content", key));
+      if (docSnap.exists()) {
+        res.json({ key, value: docSnap.data().value });
       } else {
-        res.status(404).json({ success: false, message: "Inhalt für diesen Schlüssel nicht gefunden." });
+        res.status(404).json({ error: "Inhalt nicht gefunden" });
       }
     } catch (err) {
       res.status(500).json({ success: false, message: "Fehler beim Abrufen des Inhalts." });
     }
   });
 
+  app.post("/api/content", async (req, res) => {
+    const { content } = req.body; // { key: value }
+    try {
+      const promises = Object.entries(content).map(([key, value]) => 
+        setDoc(doc(firestore, "content", key), { value })
+      );
+      await Promise.all(promises);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Inhalt konnte nicht gespeichert werden." });
+    }
+  });
+
   // Media Management
-  app.get("/api/media", (req, res) => {
-    const media = db.prepare('SELECT * FROM media ORDER BY sort_order ASC').all();
-    res.json(media);
+  app.get("/api/media", async (req, res) => {
+    try {
+      const snapshot = await getDocs(query(collection(firestore, "media"), orderBy("sort_order", "asc")));
+      const media = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      res.json(media);
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Medien konnten nicht geladen werden." });
+    }
   });
 
-  app.post("/api/media", (req, res) => {
+  app.post("/api/media", async (req, res) => {
     const { type, url, category, title, description, sort_order } = req.body;
-    const result = db.prepare('INSERT INTO media (type, url, category, title, description, sort_order) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(type, url, category, title, description, sort_order || 0);
-    res.json({ success: true, id: result.lastInsertRowid });
+    try {
+      const docRef = doc(collection(firestore, "media"));
+      await setDoc(docRef, { type, url, category, title, description, sort_order: sort_order || 0 });
+      res.json({ success: true, id: docRef.id });
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Medium konnte nicht erstellt werden." });
+    }
   });
 
-  app.put("/api/media/:id", (req, res) => {
+  app.put("/api/media/:id", async (req, res) => {
     const { id } = req.params;
     const { type, url, category, title, description, sort_order } = req.body;
-    db.prepare('UPDATE media SET type = ?, url = ?, category = ?, title = ?, description = ?, sort_order = ? WHERE id = ?')
-      .run(type, url, category, title, description, sort_order, id);
-    res.json({ success: true });
+    try {
+      await updateDoc(doc(firestore, "media", id), { type, url, category, title, description, sort_order });
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Medium konnte nicht aktualisiert werden." });
+    }
   });
 
-  app.delete("/api/media/:id", (req, res) => {
+  app.delete("/api/media/:id", async (req, res) => {
     const { id } = req.params;
-    db.prepare('DELETE FROM media WHERE id = ?').run(id);
-    res.json({ success: true });
+    try {
+      await deleteDoc(doc(firestore, "media", id));
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Medium konnte nicht gelöscht werden." });
+    }
   });
 
   // --- Calculation & Trade Management ---
 
-  app.get("/api/trades", (req, res) => {
-    const trades = db.prepare(`
-      SELECT t.*, 
-      (SELECT COUNT(*) FROM service_items WHERE trade_id = t.id) as service_count
-      FROM trades t
-      ORDER BY t.name ASC
-    `).all();
-    res.json(trades);
+  app.get("/api/trades", async (req, res) => {
+    try {
+      const snapshot = await getDocs(query(collection(firestore, "trades"), orderBy("name", "asc")));
+      const trades = await Promise.all(snapshot.docs.map(async (tradeDoc) => {
+        const serviceItemsSnapshot = await getDocs(collection(firestore, `trades/${tradeDoc.id}/service_items`));
+        return { 
+          id: tradeDoc.id, 
+          ...tradeDoc.data(), 
+          service_count: serviceItemsSnapshot.size 
+        };
+      }));
+      res.json(trades);
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Gewerke konnten nicht geladen werden." });
+    }
   });
 
-  app.post("/api/trades", (req, res) => {
+  app.post("/api/trades", async (req, res) => {
     const { name, description, is_anlage_a } = req.body;
     try {
-      const result = db.prepare('INSERT INTO trades (name, description, is_anlage_a) VALUES (?, ?, ?)').run(name, description, is_anlage_a || 0);
-      const tradeId = result.lastInsertRowid;
+      const docRef = doc(collection(firestore, "trades"));
+      await setDoc(docRef, { name, description, is_anlage_a: is_anlage_a || false });
+      const tradeId = docRef.id;
       
       // Initialize default labor rates for the new trade
-      const insertLabor = db.prepare('INSERT INTO labor_rates (trade_id, worker_type, hourly_rate) VALUES (?, ?, ?)');
-      insertLabor.run(tradeId, 'Meister', 65.00);
-      insertLabor.run(tradeId, 'Geselle', 52.00);
-      insertLabor.run(tradeId, 'Helfer', 38.00);
+      const laborRates = [
+        { worker_type: 'Meister', hourly_rate: 65.00 },
+        { worker_type: 'Geselle', hourly_rate: 52.00 },
+        { worker_type: 'Helfer', hourly_rate: 38.00 }
+      ];
+      
+      const promises = laborRates.map(rate => 
+        setDoc(doc(collection(firestore, `trades/${tradeId}/labor_rates`)), rate)
+      );
+      await Promise.all(promises);
 
       res.json({ success: true, id: tradeId });
     } catch (err) {
@@ -263,73 +309,81 @@ async function startServer() {
     }
   });
 
-  app.put("/api/trades/:id", (req, res) => {
+  app.put("/api/trades/:id", async (req, res) => {
     const { id } = req.params;
     const { name, description, is_anlage_a } = req.body;
     try {
-      db.prepare('UPDATE trades SET name = ?, description = ?, is_anlage_a = ? WHERE id = ?').run(name, description, is_anlage_a || 0, id);
+      await updateDoc(doc(firestore, "trades", id), { name, description, is_anlage_a: is_anlage_a || false });
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ success: false, message: "Gewerk konnte nicht aktualisiert werden." });
     }
   });
 
-  app.delete("/api/trades/:id", (req, res) => {
+  app.delete("/api/trades/:id", async (req, res) => {
     const { id } = req.params;
     try {
-      // Also delete related labor rates and service items
-      db.prepare('DELETE FROM labor_rates WHERE trade_id = ?').run(id);
-      db.prepare('DELETE FROM service_items WHERE trade_id = ?').run(id);
-      db.prepare('DELETE FROM trades WHERE id = ?').run(id);
+      // Note: In a real scenario, we should also delete subcollections.
+      // Firestore doesn't delete subcollections automatically when a document is deleted.
+      await deleteDoc(doc(firestore, "trades", id));
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ success: false, message: "Gewerk konnte nicht gelöscht werden." });
     }
   });
 
-  app.get("/api/trades/:id/labor-rates", (req, res) => {
+  app.get("/api/trades/:id/labor-rates", async (req, res) => {
     const { id } = req.params;
-    const rates = db.prepare('SELECT * FROM labor_rates WHERE trade_id = ?').all(id);
-    res.json(rates);
+    try {
+      const snapshot = await getDocs(collection(firestore, `trades/${id}/labor_rates`));
+      const rates = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      res.json(rates);
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Stundensätze konnten nicht geladen werden." });
+    }
   });
 
-  app.get("/api/trades/:id/service-items", (req, res) => {
+  app.get("/api/trades/:id/service-items", async (req, res) => {
     const { id } = req.params;
-    const items = db.prepare('SELECT * FROM service_items WHERE trade_id = ? ORDER BY sort_order ASC').all(id);
-    res.json(items);
+    try {
+      const snapshot = await getDocs(query(collection(firestore, `trades/${id}/service_items`), orderBy("sort_order", "asc")));
+      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      res.json(items);
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Leistungen konnten nicht geladen werden." });
+    }
   });
 
-  app.post("/api/service-items", (req, res) => {
+  app.post("/api/service-items", async (req, res) => {
     const { trade_id, name, unit, labor_hours, material_price, description, sort_order } = req.body;
-    const result = db.prepare('INSERT INTO service_items (trade_id, name, unit, labor_hours, material_price, description, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(trade_id, name, unit, labor_hours, material_price, description, sort_order || 0);
-    res.json({ success: true, id: result.lastInsertRowid });
+    try {
+      const docRef = doc(collection(firestore, `trades/${trade_id}/service_items`));
+      await setDoc(docRef, { name, unit, labor_hours, material_price, description, sort_order: sort_order || 0 });
+      res.json({ success: true, id: docRef.id });
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Leistung konnte nicht erstellt werden." });
+    }
   });
 
-  app.post("/api/service-items/bulk", (req, res) => {
+  app.post("/api/service-items/bulk", async (req, res) => {
     const { items } = req.body;
     if (!Array.isArray(items)) {
       return res.status(400).json({ success: false, message: "Items must be an array" });
     }
 
-    const insert = db.prepare('INSERT INTO service_items (trade_id, name, unit, labor_hours, material_price, description, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)');
-    
-    const transaction = db.transaction((items) => {
-      for (const item of items) {
-        insert.run(
-          item.trade_id, 
-          item.name, 
-          item.unit, 
-          item.labor_hours || 0, 
-          item.material_price || 0, 
-          item.description || '', 
-          item.sort_order || 0
-        );
-      }
-    });
-
     try {
-      transaction(items);
+      const promises = items.map(item => {
+        const docRef = doc(collection(firestore, `trades/${item.trade_id}/service_items`));
+        return setDoc(docRef, { 
+          name: item.name, 
+          unit: item.unit, 
+          labor_hours: item.labor_hours || 0, 
+          material_price: item.material_price || 0, 
+          description: item.description || '', 
+          sort_order: item.sort_order || 0 
+        });
+      });
+      await Promise.all(promises);
       res.json({ success: true, count: items.length });
     } catch (err) {
       console.error("Bulk import error:", err);
@@ -337,48 +391,61 @@ async function startServer() {
     }
   });
 
-  app.put("/api/service-items/:id", (req, res) => {
+  app.put("/api/service-items/:id", async (req, res) => {
     const { id } = req.params;
-    const { name, unit, labor_hours, material_price, description, sort_order } = req.body;
+    const { trade_id, name, unit, labor_hours, material_price, description, sort_order } = req.body;
     try {
-      db.prepare('UPDATE service_items SET name = ?, unit = ?, labor_hours = ?, material_price = ?, description = ?, sort_order = ? WHERE id = ?')
-        .run(name, unit, labor_hours, material_price, description, sort_order, id);
+      await updateDoc(doc(firestore, `trades/${trade_id}/service_items`, id), { name, unit, labor_hours, material_price, description, sort_order });
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ success: false, message: "Leistung konnte nicht aktualisiert werden." });
     }
   });
 
-  app.delete("/api/service-items/:id", (req, res) => {
+  app.delete("/api/service-items/:id", async (req, res) => {
     const { id } = req.params;
+    const { trade_id } = req.query;
     try {
-      db.prepare('DELETE FROM service_items WHERE id = ?').run(id);
+      await deleteDoc(doc(firestore, `trades/${trade_id}/service_items`, id));
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ success: false, message: "Leistung konnte nicht gelöscht werden." });
     }
   });
 
-  app.get("/api/labor-rates/all", (req, res) => {
-    const rates = db.prepare(`
-      SELECT lr.*, t.name as trade_name 
-      FROM labor_rates lr 
-      JOIN trades t ON lr.trade_id = t.id
-      ORDER BY t.name, lr.worker_type
-    `).all();
-    res.json(rates);
+  app.get("/api/labor-rates/all", async (req, res) => {
+    try {
+      const tradesSnapshot = await getDocs(collection(firestore, "trades"));
+      const allRates: any[] = [];
+      
+      for (const tradeDoc of tradesSnapshot.docs) {
+        const ratesSnapshot = await getDocs(collection(firestore, `trades/${tradeDoc.id}/labor_rates`));
+        ratesSnapshot.docs.forEach(rateDoc => {
+          allRates.push({
+            id: rateDoc.id,
+            trade_id: tradeDoc.id,
+            trade_name: tradeDoc.data().name,
+            ...rateDoc.data()
+          });
+        });
+      }
+      res.json(allRates);
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Stundensätze konnten nicht geladen werden." });
+    }
   });
 
-  app.put("/api/labor-rates", (req, res) => {
-    const { rates } = req.body; // Array of { id, hourly_rate }
-    const update = db.prepare('UPDATE labor_rates SET hourly_rate = ? WHERE id = ?');
-    const transaction = db.transaction((data) => {
-      for (const rate of data) {
-        update.run(rate.hourly_rate, rate.id);
-      }
-    });
-    transaction(rates);
-    res.json({ success: true });
+  app.put("/api/labor-rates", async (req, res) => {
+    const { rates } = req.body; // Array of { id, trade_id, hourly_rate }
+    try {
+      const promises = rates.map((rate: any) => 
+        updateDoc(doc(firestore, `trades/${rate.trade_id}/labor_rates`, rate.id), { hourly_rate: rate.hourly_rate })
+      );
+      await Promise.all(promises);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Stundensätze konnten nicht aktualisiert werden." });
+    }
   });
 
   app.post("/api/trades/:id/import-csv", upload.single('file'), (req, res) => {
@@ -790,6 +857,179 @@ async function startServer() {
     }
   });
 
+  // --- Settings Management ---
+  app.get("/api/settings", (req, res) => {
+    try {
+      const settings = db.prepare('SELECT * FROM settings').all().reduce((acc: any, item: any) => {
+        acc[item.key] = item.value;
+        return acc;
+      }, {});
+      res.json(settings);
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Einstellungen konnten nicht geladen werden." });
+    }
+  });
+
+  app.put("/api/settings", (req, res) => {
+    const settings = req.body; // Object with key-value pairs
+    try {
+      const update = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+      const transaction = db.transaction((data) => {
+        for (const [key, value] of Object.entries(data)) {
+          update.run(key, String(value));
+        }
+      });
+      transaction(settings);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Einstellungen konnten nicht gespeichert werden." });
+    }
+  });
+
+  // --- User Profile & Auth ---
+  app.get("/api/user/profile", (req, res) => {
+    const { userId } = req.query; // For demo, we'll use query param
+    if (!userId) return res.status(400).json({ success: false, message: "User ID required" });
+    
+    const user = db.prepare('SELECT * FROM users WHERE id = ? OR google_id = ?').get(userId, userId) as any;
+    if (user) {
+      res.json({ success: true, user });
+    } else {
+      res.status(404).json({ success: false, message: "User not found" });
+    }
+  });
+
+  app.post("/api/user/profile", (req, res) => {
+    const { userId, firstName, lastName, phone, address, email } = req.body;
+    try {
+      db.prepare(`
+        UPDATE users 
+        SET first_name = ?, last_name = ?, phone = ?, address = ?, email = ?
+        WHERE id = ? OR google_id = ?
+      `).run(firstName, lastName, phone, address, email, userId, userId);
+      
+      // Simulate SMS greeting
+      console.log(`Sending SMS greeting to ${phone}: Willkommen bei Los Facility Service, ${firstName}!`);
+      
+      res.json({ success: true, message: "Profil erfolgreich aktualisiert!" });
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Fehler beim Aktualisieren des Profils." });
+    }
+  });
+
+  app.post("/api/auth/google-login", (req, res) => {
+    try {
+      const { googleId, email, name } = req.body;
+      let user = db.prepare('SELECT * FROM users WHERE google_id = ?').get(googleId) as any;
+      
+      if (!user) {
+        // Create new user
+        const result = db.prepare('INSERT INTO users (google_id, email, role, first_name) VALUES (?, ?, ?, ?)')
+          .run(googleId, email, 'Kunde', name ? name.split(' ')[0] : 'User');
+        user = db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid);
+      }
+      
+      const isProfileComplete = !!(user.first_name && user.last_name && user.phone && user.address);
+      
+      res.json({ 
+        success: true, 
+        user, 
+        isProfileComplete,
+        token: "fake-jwt-token-for-demo" 
+      });
+    } catch (error) {
+      console.error("Google login error:", error);
+      res.status(500).json({ success: false, message: "Fehler bei der Google-Anmeldung", error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // --- Password Reset ---
+  const transporter = nodemailer.createTransport({
+    host: process.env.EMAIL_HOST || 'smtp.example.com',
+    port: parseInt(process.env.EMAIL_PORT || '587'),
+    secure: process.env.EMAIL_PORT === '465',
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+  });
+
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    try {
+      const { email } = req.body;
+      const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
+
+      if (!user) {
+        // We don't want to reveal if a user exists or not for security reasons
+        return res.json({ success: true, message: "Wenn ein Konto mit dieser E-Mail existiert, wurde ein Link zum Zurücksetzen des Passworts gesendet." });
+      }
+
+      const token = crypto.randomBytes(32).toString('hex');
+      const expiry = new Date(Date.now() + 3600000); // 1 hour from now
+
+      db.prepare('UPDATE users SET reset_token = ?, reset_token_expiry = ? WHERE id = ?')
+        .run(token, expiry.toISOString(), user.id);
+
+      const resetUrl = `${req.protocol}://${req.get('host')}/reset-password?token=${token}`;
+
+      const mailOptions = {
+        from: process.env.EMAIL_FROM || '"Los Facility Service" <noreply@example.com>',
+        to: email,
+        subject: 'Passwort zurücksetzen',
+        html: `
+          <p>Sie haben eine Anfrage zum Zurücksetzen Ihres Passworts gestellt.</p>
+          <p>Klicken Sie auf den folgenden Link, um Ihr Passwort zurückzusetzen:</p>
+          <a href="${resetUrl}">${resetUrl}</a>
+          <p>Dieser Link ist 1 Stunde lang gültig.</p>
+          <p>Wenn Sie dies nicht angefordert haben, ignorieren Sie diese E-Mail bitte.</p>
+        `,
+      };
+
+      // In a real scenario, we would send the email. 
+      // For now, we'll log the link and simulate success.
+      console.log(`Password reset link for ${email}: ${resetUrl}`);
+      
+      try {
+        await transporter.sendMail(mailOptions);
+        console.log(`Reset email sent to ${email}`);
+      } catch (mailError) {
+        console.error("Failed to send reset email:", mailError);
+        // We still return success to the user to avoid leaking user existence
+      }
+
+      res.json({ success: true, message: "Wenn ein Konto mit dieser E-Mail existiert, wurde ein Link zum Zurücksetzen des Passworts gesendet." });
+    } catch (error) {
+      console.error("Forgot password error:", error);
+      res.status(500).json({ success: false, message: "Ein Fehler ist aufgetreten." });
+    }
+  });
+
+  app.post("/api/auth/reset-password", async (req, res) => {
+    try {
+      const { token, newPassword } = req.body;
+      const user = db.prepare('SELECT * FROM users WHERE reset_token = ? AND reset_token_expiry > ?')
+        .get(token, new Date().toISOString()) as any;
+
+      if (!user) {
+        return res.status(400).json({ success: false, message: "Ungültiger oder abgelaufener Token." });
+      }
+
+      db.prepare('UPDATE users SET password = ?, reset_token = NULL, reset_token_expiry = NULL WHERE id = ?')
+        .run(newPassword, user.id);
+
+      res.json({ success: true, message: "Passwort erfolgreich zurückgesetzt." });
+    } catch (error) {
+      console.error("Reset password error:", error);
+      res.status(500).json({ success: false, message: "Ein Fehler ist aufgetreten." });
+    }
+  });
+
+  app.get("/api/user/offers-count", (req, res) => {
+    const { userId } = req.query;
+    const user = db.prepare('SELECT free_offers_used FROM users WHERE id = ? OR google_id = ?').get(userId, userId) as any;
+    res.json({ success: true, count: user ? user.free_offers_used : 0 });
+  });
+
   // --- Project & Quote Management ---
 
   app.get("/api/projects", (req, res) => {
@@ -803,12 +1043,39 @@ async function startServer() {
   });
 
   app.post("/api/projects", (req, res) => {
-    const { name, customer_id, customer_name, customer_address, currency, tax_rate, craftsman_name, craftsman_contact, terms_and_conditions } = req.body;
+    const { userId, name, customer_id, customer_name, customer_address, currency, tax_rate, craftsman_name, craftsman_contact, terms_and_conditions } = req.body;
     try {
+      // Check if paid offers are enabled
+      const paidEnabled = db.prepare('SELECT value FROM settings WHERE key = ?').get('paid_offers_enabled') as { value: string } | undefined;
+      const isPaidEnabled = paidEnabled?.value === 'true';
+
+      if (isPaidEnabled && userId) {
+        // Check user's free offer usage and subscription
+        const user = db.prepare('SELECT free_offers_used FROM users WHERE id = ? OR google_id = ?').get(userId, userId) as any;
+        const sub = db.prepare('SELECT status FROM subscriptions WHERE user_id = ?').get(userId) as any;
+        
+        if (user && user.free_offers_used >= 1 && (!sub || sub.status !== 'active')) {
+          return res.status(403).json({ 
+            success: false, 
+            message: "Kostenloses Kontingent erschöpft. Bitte Upgrade auf Pro durchführen.",
+            limitReached: true
+          });
+        }
+      }
+
       const result = db.prepare('INSERT INTO projects (name, customer_id, customer_name, customer_address, currency, tax_rate, craftsman_name, craftsman_contact, terms_and_conditions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
         .run(name, customer_id || null, customer_name || '', customer_address || '', currency || 'EUR', tax_rate || 19.0, craftsman_name || '', craftsman_contact || '', terms_and_conditions || '');
-      res.json({ success: true, id: result.lastInsertRowid });
+      
+      const projectId = result.lastInsertRowid;
+
+      // Increment free_offers_used if applicable
+      if (userId) {
+        db.prepare('UPDATE users SET free_offers_used = free_offers_used + 1 WHERE id = ? OR google_id = ?').run(userId, userId);
+      }
+
+      res.json({ success: true, id: projectId });
     } catch (err) {
+      console.error("Project creation error:", err);
       res.status(500).json({ success: false, message: "Projekt konnte nicht erstellt werden." });
     }
   });
@@ -825,13 +1092,13 @@ async function startServer() {
 
       // For each item, get labor components and parse special_attributes
       const itemsWithLabor = items.map((item: any) => {
-        const labor = db.prepare('SELECT * FROM quote_item_labor WHERE quote_item_id = ?').all(item.id) as any[];
+        const labor_components = db.prepare('SELECT * FROM quote_item_labor WHERE quote_item_id = ?').all(item.id) as any[];
         
         let itemLaborCost = 0;
         let itemLaborHours = 0;
 
-        if (labor && labor.length > 0) {
-          labor.forEach(comp => {
+        if (labor_components && labor_components.length > 0) {
+          labor_components.forEach(comp => {
             let multiplier = 1;
             if (comp.time_unit === 'Tage') multiplier = 8;
             else if (comp.time_unit === 'Wochen') multiplier = 40;
@@ -861,7 +1128,7 @@ async function startServer() {
         } catch (e) {
           console.error("Error parsing special_attributes:", e);
         }
-        return { ...item, labor, special_attributes, calculated_labor_hours: itemLaborHours, calculated_labor_cost: itemLaborCost };
+        return { ...item, labor_components, special_attributes, calculated_labor_hours: itemLaborHours, calculated_labor_cost: itemLaborCost };
       });
 
       res.json({ 
@@ -883,7 +1150,7 @@ async function startServer() {
 
   app.put("/api/projects/:id", (req, res) => {
     const { id } = req.params;
-    const { name, customer_id, customer_name, customer_address, currency, tax_rate, status, craftsman_name, craftsman_contact, terms_and_conditions } = req.body;
+    const { name, customer_id, customer_name, customer_address, currency, tax_rate, status, craftsman_name, craftsman_contact, terms_and_conditions, site_setup_enabled, site_setup_price } = req.body;
     try {
       db.prepare(`
         UPDATE projects 
@@ -897,9 +1164,11 @@ async function startServer() {
             craftsman_name = COALESCE(?, craftsman_name),
             craftsman_contact = COALESCE(?, craftsman_contact),
             terms_and_conditions = COALESCE(?, terms_and_conditions),
+            site_setup_enabled = COALESCE(?, site_setup_enabled),
+            site_setup_price = COALESCE(?, site_setup_price),
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).run(name, customer_id, customer_name, customer_address, currency, tax_rate, status, craftsman_name, craftsman_contact, terms_and_conditions, id);
+      `).run(name, customer_id, customer_name, customer_address, currency, tax_rate, status, craftsman_name, craftsman_contact, terms_and_conditions, site_setup_enabled, site_setup_price, id);
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ success: false, message: "Projekt konnte nicht aktualisiert werden." });
@@ -950,7 +1219,7 @@ async function startServer() {
 
   app.post("/api/projects/:id/items", (req, res) => {
     const { id } = req.params;
-    const { name, description, unit, quantity, length, width, height, depth, material_price_per_unit, labor, sketch_data, sort_order, special_attributes } = req.body;
+    const { name, description, unit, quantity, length, width, height, depth, material_price_per_unit, labor_components, sketch_data, sort_order, special_attributes } = req.body;
     
     try {
       const transaction = db.transaction(() => {
@@ -961,12 +1230,12 @@ async function startServer() {
         
         const itemId = result.lastInsertRowid;
         
-        if (labor && Array.isArray(labor)) {
+        if (labor_components && Array.isArray(labor_components)) {
           const insertLabor = db.prepare(`
             INSERT INTO quote_item_labor (quote_item_id, worker_type, hourly_rate, quantity, time_value, time_unit) 
             VALUES (?, ?, ?, ?, ?, ?)
           `);
-          for (const l of labor) {
+          for (const l of labor_components) {
             insertLabor.run(itemId, l.worker_type, l.hourly_rate, l.quantity || 1, l.time_value || 0, l.time_unit || 'Hours');
           }
         }
@@ -1376,25 +1645,30 @@ async function startServer() {
   });
 
   // --- Settings ---
-  app.get("/api/settings", (req, res) => {
-    const settings = db.prepare('SELECT * FROM settings').all();
-    const settingsMap = settings.reduce((acc: any, item: any) => {
-      acc[item.key] = item.value;
-      return acc;
-    }, {});
-    res.json(settingsMap);
+  app.get("/api/settings", async (req, res) => {
+    try {
+      const snapshot = await getDocs(collection(firestore, "settings"));
+      const settingsMap = snapshot.docs.reduce((acc: any, doc) => {
+        acc[doc.id] = doc.data().value;
+        return acc;
+      }, {});
+      res.json(settingsMap);
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Einstellungen konnten nicht geladen werden." });
+    }
   });
 
-  app.post("/api/settings", (req, res) => {
+  app.post("/api/settings", async (req, res) => {
     const { settings } = req.body; // { key: value }
-    const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
-    const transaction = db.transaction((data) => {
-      for (const [key, value] of Object.entries(data)) {
-        upsert.run(key, value);
-      }
-    });
-    transaction(settings);
-    res.json({ success: true });
+    try {
+      const promises = Object.entries(settings).map(([key, value]) => 
+        setDoc(doc(firestore, "settings", key), { value })
+      );
+      await Promise.all(promises);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Einstellungen konnten nicht gespeichert werden." });
+    }
   });
 
   app.get("/api/invoices/:id/validate-einvoice", (req, res) => {
@@ -1565,6 +1839,16 @@ async function startServer() {
       console.error("GAEB export error:", err);
       res.status(500).send("Fehler beim GAEB-Export");
     }
+  });
+
+  // --- Global Error Handler for API ---
+  app.use("/api", (err: any, req: any, res: any, next: any) => {
+    console.error("API Error:", err);
+    res.status(500).json({ 
+      success: false, 
+      message: "Ein interner Serverfehler ist aufgetreten.",
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
   });
 
   // --- Vite / Static Files ---

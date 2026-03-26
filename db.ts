@@ -16,7 +16,17 @@ export function initDb() {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE,
     password TEXT,
-    role TEXT DEFAULT 'admin'
+    role TEXT DEFAULT 'admin',
+    first_name TEXT,
+    last_name TEXT,
+    phone TEXT,
+    address TEXT,
+    email TEXT UNIQUE,
+    google_id TEXT UNIQUE,
+    email_verified INTEGER DEFAULT 0,
+    phone_verified INTEGER DEFAULT 0,
+    free_offers_used INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS trades (
@@ -241,11 +251,55 @@ export function initDb() {
     // Column already exists or other error
   }
 
+  // Ensure site_setup columns exist in projects table
+  try {
+    db.exec("ALTER TABLE projects ADD COLUMN site_setup_enabled INTEGER DEFAULT 0");
+    db.exec("ALTER TABLE projects ADD COLUMN site_setup_price REAL DEFAULT 0");
+  } catch (e) {
+    // Columns already exist or other error
+  }
+
   // Ensure is_anlage_a column exists in trades table
   try {
     db.exec("ALTER TABLE trades ADD COLUMN is_anlage_a INTEGER DEFAULT 0");
   } catch (e) {
     // Column already exists or other error
+  }
+
+  // Ensure google_id column exists in users table
+  try {
+    db.exec("ALTER TABLE users ADD COLUMN google_id TEXT UNIQUE");
+  } catch (e) {
+    // Column already exists or other error
+  }
+
+  // Ensure other columns exist in users table
+  const userColumns = [
+    { name: 'first_name', type: 'TEXT' },
+    { name: 'last_name', type: 'TEXT' },
+    { name: 'phone', type: 'TEXT' },
+    { name: 'address', type: 'TEXT' },
+    { name: 'email', type: 'TEXT UNIQUE' },
+    { name: 'email_verified', type: 'INTEGER DEFAULT 0' },
+    { name: 'phone_verified', type: 'INTEGER DEFAULT 0' },
+    { name: 'free_offers_used', type: 'INTEGER DEFAULT 0' },
+    { name: 'created_at', type: 'DATETIME DEFAULT CURRENT_TIMESTAMP' }
+  ];
+
+  for (const col of userColumns) {
+    try {
+      db.exec(`ALTER TABLE users ADD COLUMN ${col.name} ${col.type}`);
+    } catch (e) {
+      // Column already exists or other error
+    }
+  }
+
+  // Ensure reset_token and reset_token_expiry columns exist in users table
+  try {
+    db.exec("ALTER TABLE users ADD COLUMN reset_token TEXT");
+    db.exec("ALTER TABLE users ADD COLUMN reset_token_expiry DATETIME");
+  } catch (e) {
+    // Columns already exist or other error
   }
 
 // Seed default data if empty
@@ -519,6 +573,22 @@ if (!geruestbauExists) {
   insertLabor.run(tradeId, 'Geselle', 52.00);
   insertLabor.run(tradeId, 'Helfer', 38.00);
 }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    )
+  `);
+
+  // Seed default settings
+  const seedSettings = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
+  seedSettings.run('paid_offers_enabled', 'false');
+  seedSettings.run('company_name', 'Handwerksmeister Muster');
+  seedSettings.run('company_address', 'Musterstraße 1, 12345 Musterstadt');
+  seedSettings.run('company_email', 'info@handwerksmeister.de');
+  seedSettings.run('company_phone', '0123 456789');
+  seedSettings.run('tax_id', 'DE123456789');
 
 console.log("Database initialization complete.");
   } catch (err) {

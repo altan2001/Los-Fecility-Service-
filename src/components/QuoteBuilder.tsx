@@ -91,6 +91,8 @@ interface Project {
   craftsman_name?: string;
   craftsman_contact?: string;
   terms_and_conditions?: string;
+  site_setup_enabled?: number;
+  site_setup_price?: number;
 }
 
 interface LaborRate {
@@ -101,7 +103,7 @@ interface LaborRate {
   hourly_rate: number;
 }
 
-export default function QuoteBuilder({ initialProjectId, initialView }: { initialProjectId?: number, initialView?: 'list' | 'edit' | 'preview' }) {
+export default function QuoteBuilder({ initialProjectId, initialView, userId }: { initialProjectId?: number, initialView?: 'list' | 'edit' | 'preview', userId?: string }) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [catalog, setCatalog] = useState<Trade[]>([]);
@@ -132,7 +134,9 @@ export default function QuoteBuilder({ initialProjectId, initialView }: { initia
   const [editProjectDetails, setEditProjectDetails] = useState({
     craftsman_name: '',
     craftsman_contact: '',
-    terms_and_conditions: ''
+    terms_and_conditions: '',
+    site_setup_enabled: 0,
+    site_setup_price: 0
   });
   const [isSavingProject, setIsSavingProject] = useState(false);
 
@@ -186,7 +190,7 @@ export default function QuoteBuilder({ initialProjectId, initialView }: { initia
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newProject)
+        body: JSON.stringify({ ...newProject, userId })
       });
       const data = await res.json();
       if (data.success) {
@@ -219,7 +223,9 @@ export default function QuoteBuilder({ initialProjectId, initialView }: { initia
       setEditProjectDetails({
         craftsman_name: data.craftsman_name || '',
         craftsman_contact: data.craftsman_contact || '',
-        terms_and_conditions: data.terms_and_conditions || ''
+        terms_and_conditions: data.terms_and_conditions || '',
+        site_setup_enabled: data.site_setup_enabled || 0,
+        site_setup_price: data.site_setup_price || 0
       });
       setView('edit');
     } catch (err) {
@@ -242,8 +248,10 @@ export default function QuoteBuilder({ initialProjectId, initialView }: { initia
         })
       });
       if (res.ok) {
-        const updated = await res.json();
-        setSelectedProject(updated);
+        // Fetch fresh data to ensure totals are correct
+        const freshRes = await fetch(`/api/projects/${selectedProject.id}`);
+        const freshData = await freshRes.json();
+        setSelectedProject(freshData);
         alert('Projekt-Details erfolgreich aktualisiert.');
       }
     } catch (err) {
@@ -462,7 +470,7 @@ export default function QuoteBuilder({ initialProjectId, initialView }: { initia
       materialTotal += item.quantity * item.material_price_per_unit;
     });
 
-    const net = laborTotal + materialTotal;
+    const net = laborTotal + materialTotal + (selectedProject.site_setup_enabled ? (selectedProject.site_setup_price || 0) : 0);
     const tax = net * (selectedProject.tax_rate / 100);
 
     return {
@@ -648,31 +656,47 @@ export default function QuoteBuilder({ initialProjectId, initialView }: { initia
     // Totals Block
     const { net, tax, gross } = totals;
     const totalsX = pageWidth - 90;
+    
+    const hasSiteSetup = selectedProject.site_setup_enabled === 1;
+    const totalsHeight = hasSiteSetup ? 42 : 35;
 
     doc.setFillColor(248, 250, 252);
-    doc.rect(totalsX, currentY - 5, 70, 35, 'F');
+    doc.rect(totalsX, currentY - 5, 70, totalsHeight, 'F');
     
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
-    doc.setTextColor(100, 116, 139);
-    doc.text('Summe Netto:', totalsX + 5, currentY + 5);
-    doc.setTextColor(20, 20, 20);
-    doc.text(`${net.toLocaleString('de-DE', { style: 'currency', currency: selectedProject.currency || 'EUR' })}`, pageWidth - 25, currentY + 5, { align: 'right' });
+    
+    let yOffset = currentY + 5;
     
     doc.setTextColor(100, 116, 139);
-    doc.text(`MwSt. (${selectedProject.tax_rate}%):`, totalsX + 5, currentY + 12);
+    doc.text('Summe Netto:', totalsX + 5, yOffset);
     doc.setTextColor(20, 20, 20);
-    doc.text(`${tax.toLocaleString('de-DE', { style: 'currency', currency: selectedProject.currency || 'EUR' })}`, pageWidth - 25, currentY + 12, { align: 'right' });
+    doc.text(`${(net - (hasSiteSetup ? (selectedProject.site_setup_price || 0) : 0)).toLocaleString('de-DE', { style: 'currency', currency: selectedProject.currency || 'EUR' })}`, pageWidth - 25, yOffset, { align: 'right' });
+    
+    if (hasSiteSetup) {
+      yOffset += 7;
+      doc.setTextColor(100, 116, 139);
+      doc.text('Baustelle einrichten:', totalsX + 5, yOffset);
+      doc.setTextColor(20, 20, 20);
+      doc.text(`${(selectedProject.site_setup_price || 0).toLocaleString('de-DE', { style: 'currency', currency: selectedProject.currency || 'EUR' })}`, pageWidth - 25, yOffset, { align: 'right' });
+    }
+
+    yOffset += 7;
+    doc.setTextColor(100, 116, 139);
+    doc.text(`MwSt. (${selectedProject.tax_rate}%):`, totalsX + 5, yOffset);
+    doc.setTextColor(20, 20, 20);
+    doc.text(`${tax.toLocaleString('de-DE', { style: 'currency', currency: selectedProject.currency || 'EUR' })}`, pageWidth - 25, yOffset, { align: 'right' });
     
     doc.setDrawColor(203, 213, 225);
-    doc.line(totalsX + 5, currentY + 16, pageWidth - 25, currentY + 16);
+    doc.line(totalsX + 5, yOffset + 4, pageWidth - 25, yOffset + 4);
 
+    yOffset += 11;
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
-    doc.text('GESAMTBETRAG:', totalsX + 5, currentY + 23);
-    doc.text(`${gross.toLocaleString('de-DE', { style: 'currency', currency: selectedProject.currency || 'EUR' })}`, pageWidth - 25, currentY + 23, { align: 'right' });
+    doc.text('GESAMTBETRAG:', totalsX + 5, yOffset);
+    doc.text(`${gross.toLocaleString('de-DE', { style: 'currency', currency: selectedProject.currency || 'EUR' })}`, pageWidth - 25, yOffset, { align: 'right' });
 
-    currentY += 45;
+    currentY += totalsHeight + 10;
 
     // Terms & Conditions Summary
     if (currentY > pageHeight - 60) {
@@ -1071,6 +1095,44 @@ export default function QuoteBuilder({ initialProjectId, initialView }: { initia
                       className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all resize-none"
                     />
                   </div>
+                  <div className="md:col-span-2 p-6 bg-brand-primary/5 rounded-3xl border border-brand-primary/10 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-brand-primary text-white rounded-xl">
+                          <MapPin size={18} />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-black text-brand-dark">Baustelle einrichten</h4>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Pauschale für Anfahrt & Rüstzeit</p>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => setEditProjectDetails({ ...editProjectDetails, site_setup_enabled: editProjectDetails.site_setup_enabled ? 0 : 1 })}
+                        className={`w-14 h-7 rounded-full transition-all relative ${editProjectDetails.site_setup_enabled ? 'bg-brand-primary' : 'bg-slate-200'}`}
+                      >
+                        <motion.div 
+                          animate={{ x: editProjectDetails.site_setup_enabled ? 28 : 4 }}
+                          className="absolute top-1 w-5 h-5 bg-white rounded-full shadow-sm"
+                        />
+                      </button>
+                    </div>
+                    {editProjectDetails.site_setup_enabled === 1 && (
+                      <div className="flex items-center gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                        <div className="flex-1">
+                          <label className="text-[9px] font-bold text-slate-400 uppercase mb-1 block">Pauschalpreis ({selectedProject.currency})</label>
+                          <input 
+                            type="number"
+                            value={editProjectDetails.site_setup_price}
+                            onChange={(e) => setEditProjectDetails({ ...editProjectDetails, site_setup_price: parseFloat(e.target.value) || 0 })}
+                            className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm font-bold text-brand-primary focus:outline-none focus:ring-2 focus:ring-brand-primary/20"
+                          />
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-[10px] text-slate-500 italic">Dieser Betrag wird einmalig zur Gesamtsumme des Angebots addiert.</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -1228,8 +1290,8 @@ export default function QuoteBuilder({ initialProjectId, initialView }: { initia
                             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Länge (m)</label>
                             <input 
                               type="number" 
-                              value={item.length || 0}
-                              onChange={(e) => handleUpdateItem(item.id, { length: parseFloat(e.target.value) || 0 })}
+                              value={item.length ?? ''}
+                              onChange={(e) => handleUpdateItem(item.id, { length: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
                               className="w-full p-2 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-primary/20"
                             />
                           </div>
@@ -1237,8 +1299,8 @@ export default function QuoteBuilder({ initialProjectId, initialView }: { initia
                             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Breite (m)</label>
                             <input 
                               type="number" 
-                              value={item.width || 0}
-                              onChange={(e) => handleUpdateItem(item.id, { width: parseFloat(e.target.value) || 0 })}
+                              value={item.width ?? ''}
+                              onChange={(e) => handleUpdateItem(item.id, { width: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
                               className="w-full p-2 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-primary/20"
                             />
                           </div>
@@ -1246,8 +1308,8 @@ export default function QuoteBuilder({ initialProjectId, initialView }: { initia
                             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Höhe (m)</label>
                             <input 
                               type="number" 
-                              value={item.height || 0}
-                              onChange={(e) => handleUpdateItem(item.id, { height: parseFloat(e.target.value) || 0 })}
+                              value={item.height ?? ''}
+                              onChange={(e) => handleUpdateItem(item.id, { height: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
                               className="w-full p-2 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-primary/20"
                             />
                           </div>
@@ -1255,8 +1317,8 @@ export default function QuoteBuilder({ initialProjectId, initialView }: { initia
                             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Tiefe (m)</label>
                             <input 
                               type="number" 
-                              value={item.depth || 0}
-                              onChange={(e) => handleUpdateItem(item.id, { depth: parseFloat(e.target.value) || 0 })}
+                              value={item.depth ?? ''}
+                              onChange={(e) => handleUpdateItem(item.id, { depth: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
                               className="w-full p-2 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-primary/20"
                             />
                           </div>
@@ -1471,6 +1533,14 @@ export default function QuoteBuilder({ initialProjectId, initialView }: { initia
                         </div>
                         <div className="text-2xl font-black">{totals.material.toLocaleString('de-DE', { style: 'currency', currency: selectedProject.currency || 'EUR' })}</div>
                       </div>
+                      {selectedProject.site_setup_enabled === 1 && (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 text-slate-400 text-xs font-bold uppercase tracking-widest">
+                            <MapPin size={14} /> Baustelle einrichten
+                          </div>
+                          <div className="text-2xl font-black">{(selectedProject.site_setup_price || 0).toLocaleString('de-DE', { style: 'currency', currency: selectedProject.currency || 'EUR' })}</div>
+                        </div>
+                      )}
                       <div className="space-y-2 pt-6 md:pt-0 md:pl-8 md:border-l border-white/10">
                         <div className="text-brand-primary text-xs font-bold uppercase tracking-widest">Gesamtsumme (Netto)</div>
                         <div className="text-4xl font-black text-brand-primary">{totals.net.toLocaleString('de-DE', { style: 'currency', currency: selectedProject.currency || 'EUR' })}</div>

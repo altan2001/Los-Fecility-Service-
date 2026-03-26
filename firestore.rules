@@ -1,9 +1,73 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    
     // ===============================================================
-    // Helper Functions
+    // Assumed Data Model
     // ===============================================================
+    //
+    // Collection: users
+    // Fields: username, password, role, first_name, last_name, phone, address, email, google_id, email_verified, phone_verified, free_offers_used, reset_token, reset_token_expiry, created_at
+    //
+    // Collection: users/{userId}/subscriptions
+    // Fields: stripe_customer_id, stripe_subscription_id, plan_id, status, current_period_end, created_at
+    //
+    // Collection: user_roles
+    // Fields: name, permissions
+    //
+    // Collection: trades
+    // Fields: name, description, is_anlage_a
+    //
+    // Collection: trades/{tradeId}/labor_rates
+    // Fields: worker_type, hourly_rate
+    //
+    // Collection: trades/{tradeId}/service_items
+    // Fields: name, unit, labor_hours, material_price, description, sort_order
+    //
+    // Collection: customers
+    // Fields: name, company, email, phone, address, notes, category, created_at
+    //
+    // Collection: customers/{customerId}/communication_logs
+    // Fields: type, content, date
+    //
+    // Collection: projects
+    // Fields: customer_id, name, customer_name, customer_address, craftsman_name, craftsman_contact, status, currency, tax_rate, terms_and_conditions, site_setup_enabled, site_setup_price, created_at, updated_at
+    //
+    // Collection: projects/{projectId}/quote_items
+    // Fields: service_item_id, trade_id, name, description, unit, quantity, length, width, height, depth, labor_hours_per_unit, material_price_per_unit, sketch_data, special_attributes, completion, sort_order
+    //
+    // Collection: projects/{projectId}/quote_items/{itemId}/labor
+    // Fields: worker_type, hourly_rate, quantity, time_value, time_unit
+    //
+    // Collection: projects/{projectId}/diaries
+    // Fields: date, weather, temperature, work_done, notes, created_at
+    //
+    // Collection: projects/{projectId}/diaries/{diaryId}/presence
+    // Fields: person_name, role, hours
+    //
+    // Collection: projects/{projectId}/diaries/{diaryId}/attachments
+    // Fields: file_path, file_name, file_type, created_at
+    //
+    // Collection: projects/{projectId}/change_orders
+    // Fields: title, description, status, amount, created_at
+    //
+    // Collection: projects/{projectId}/invoices
+    // Fields: invoice_number, type, status, amount, due_date, created_at
+    //
+    // Collection: projects/{projectId}/images
+    // Fields: url, title, created_at
+    //
+    // Collection: media
+    // Fields: type, url, category, title, description, sort_order
+    //
+    // Collection: content
+    // Fields: value
+    //
+    // Collection: settings
+    // Fields: value
+    //
+    // ===============================================================
+
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -11,50 +75,132 @@ service cloud.firestore {
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
-
-    function isDocOwner() {
-      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    function hasRole(role) {
+      return isAuthenticated() && getUserData().role == role;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && (
+        getUserData().role == 'superadmin' || 
+        getUserData().role == 'admin' ||
+        (request.auth.token.email == "altankg@gmail.com" && request.auth.token.email_verified == true)
+      );
     }
 
-    function isAdmin() {
-      return isAuthenticated() && 
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-         (request.auth.token.email == "altankg@gmail.com" && request.auth.token.email_verified == true));
+    function hasAnyRole(roles) {
+      return isAuthenticated() && getUserData().role in roles;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
     }
 
     // ===============================================================
     // Rules
     // ===============================================================
 
-    match /trades/{tradeId} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow update: if isAuthenticated() && (isOwner(userId) || isAdmin());
 
-    match /labor_rates/{rateId} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-
-    match /service_items/{itemId} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-
-    match /projects/{projectId} {
-      allow read: if isAuthenticated() && (resource.data.uid == request.auth.uid || isAdmin());
-      allow create: if isAuthenticated() && request.resource.data.uid == request.auth.uid;
-      allow update: if isAuthenticated() && (resource.data.uid == request.auth.uid || isAdmin());
-      allow delete: if isAuthenticated() && (resource.data.uid == request.auth.uid || isAdmin());
-
-      match /items/{itemId} {
-        allow read, write: if isAuthenticated() && (get(/databases/$(database)/documents/projects/$(projectId)).data.uid == request.auth.uid || isAdmin());
+      match /subscriptions/{subId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if isAdmin();
       }
     }
 
-    match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
-      allow write: if isOwner(userId) || isAdmin();
+    match /user_roles/{roleId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /trades/{tradeId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+      
+      match /labor_rates/{rateId} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+      
+      match /service_items/{itemId} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+    }
+
+    match /customers/{customerId} {
+      allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
+
+      match /communication_logs/{logId} {
+        allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
+      }
+    }
+
+    match /projects/{projectId} {
+      allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
+      
+      match /quote_items/{itemId} {
+        allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
+
+        match /labor/{laborId} {
+          allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
+        }
+      }
+      
+      match /diaries/{diaryId} {
+        allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter']);
+
+        match /presence/{presenceId} {
+          allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter']);
+        }
+
+        match /attachments/{attachmentId} {
+          allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter']);
+        }
+      }
+
+      match /change_orders/{orderId} {
+        allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
+      }
+
+      match /invoices/{invoiceId} {
+        allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
+      }
+
+      match /images/{imageId} {
+        allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
+      }
+    }
+
+    match /media/{mediaId} {
+      allow read: if true;
+      allow write: if isAdmin() || hasRole('content_manager');
+    }
+
+    match /content/{contentKey} {
+      allow read: if true;
+      allow write: if isAdmin() || hasRole('content_manager');
+    }
+
+    match /settings/{settingKey} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Default deny
+    match /{path=**} {
+      allow read, write: if false;
     }
   }
 }

@@ -19,6 +19,14 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import SketchPad from './SketchPad';
 
+interface QuoteItemLabor {
+  worker_type: 'Meister' | 'Geselle' | 'Helfer';
+  hourly_rate: number;
+  quantity: number;
+  time_value: number;
+  time_unit: 'Stunden' | 'Tage' | 'Wochen' | 'Monate';
+}
+
 interface CalcPosition {
   id: number;
   name: string;
@@ -35,6 +43,7 @@ interface CalcPosition {
   height?: number;
   depth?: number;
   showCalculator?: boolean;
+  labor_components?: QuoteItemLabor[];
 }
 
 interface Trade {
@@ -59,6 +68,7 @@ export default function LiveCalculator() {
   const [selectedWorkerType, setSelectedWorkerType] = useState<'Meister' | 'Geselle' | 'Helfer'>('Geselle');
   const [wastePercentage, setWastePercentage] = useState<number>(5);
   const [discount, setDiscount] = useState<number>(0);
+  const [siteSetup, setSiteSetup] = useState<{ enabled: boolean, price: number }>({ enabled: false, price: 250 });
   const [showAddModal, setShowAddModal] = useState(false);
   const [modalTab, setModalTab] = useState<'list' | 'manual'>('list');
   const [modalTradeFilter, setModalTradeFilter] = useState<number | 'all'>('all');
@@ -157,11 +167,22 @@ export default function LiveCalculator() {
   };
 
   const subtotal = selectedPositions.reduce((acc, pos) => {
-    const rate = getRate(pos.tradeId, pos.worker_type);
-    const laborCost = pos.labor_hours * rate * pos.quantity;
+    let laborCost = 0;
+    if (pos.labor_components && pos.labor_components.length > 0) {
+      laborCost = pos.labor_components.reduce((lAcc, comp) => {
+        let multiplier = 1;
+        if (comp.time_unit === 'Tage') multiplier = 8;
+        else if (comp.time_unit === 'Wochen') multiplier = 40;
+        else if (comp.time_unit === 'Monate') multiplier = 160;
+        return lAcc + (comp.hourly_rate * comp.quantity * comp.time_value * multiplier);
+      }, 0);
+    } else {
+      const rate = getRate(pos.tradeId, pos.worker_type);
+      laborCost = pos.labor_hours * rate * pos.quantity;
+    }
     const materialCost = pos.material_price * pos.quantity * (1 + wastePercentage / 100);
     return acc + laborCost + materialCost;
-  }, 0);
+  }, 0) + (siteSetup.enabled ? siteSetup.price : 0);
 
   const discountAmount = subtotal * (discount / 100);
   const subtotalAfterDiscount = subtotal - discountAmount;
@@ -169,7 +190,19 @@ export default function LiveCalculator() {
   const total = subtotalAfterDiscount + tax;
 
   // --- Team & Duration Logic ---
-  const totalLaborHours = selectedPositions.reduce((acc, pos) => acc + (pos.labor_hours * pos.quantity), 0);
+  const totalLaborHours = selectedPositions.reduce((acc, pos) => {
+    if (pos.labor_components && pos.labor_components.length > 0) {
+      const posHours = pos.labor_components.reduce((lAcc, comp) => {
+        let multiplier = 1;
+        if (comp.time_unit === 'Tage') multiplier = 8;
+        else if (comp.time_unit === 'Wochen') multiplier = 40;
+        else if (comp.time_unit === 'Monate') multiplier = 160;
+        return lAcc + (comp.quantity * comp.time_value * multiplier);
+      }, 0);
+      return acc + posHours;
+    }
+    return acc + (pos.labor_hours * pos.quantity);
+  }, 0);
   
   const getTeamComposition = (hours: number) => {
     if (hours === 0) return null;
@@ -208,12 +241,23 @@ export default function LiveCalculator() {
     if (pos.labor_hours <= 0) return;
     if (selectedPositions.find(p => p.id === pos.id)) return;
     const trade = trades.find(t => t.id === selectedTrade);
+    const rate = getRate(selectedTrade || undefined, selectedWorkerType);
+    
     setSelectedPositions(prev => [...prev, { 
       ...pos, 
       quantity: 1, 
       worker_type: selectedWorkerType,
       tradeId: selectedTrade || undefined,
-      tradeName: trade?.name || 'Manuell'
+      tradeName: trade?.name || 'Manuell',
+      labor_components: [
+        {
+          worker_type: selectedWorkerType,
+          hourly_rate: rate,
+          quantity: 1,
+          time_value: pos.labor_hours,
+          time_unit: 'Stunden'
+        }
+      ]
     }]);
     // Removed setShowAddModal(false) to allow multiple selection
   };
@@ -222,6 +266,8 @@ export default function LiveCalculator() {
     if (!manualInput.name || manualInput.labor_hours <= 0) return;
     const newId = Date.now();
     const trade = trades.find(t => t.id === selectedTrade);
+    const rate = getRate(selectedTrade || undefined, selectedWorkerType);
+
     setSelectedPositions(prev => [...prev, {
       id: newId,
       name: manualInput.name,
@@ -232,7 +278,16 @@ export default function LiveCalculator() {
       isManual: true,
       worker_type: selectedWorkerType,
       tradeId: selectedTrade || undefined,
-      tradeName: trade?.name || 'Manuell'
+      tradeName: trade?.name || 'Manuell',
+      labor_components: [
+        {
+          worker_type: selectedWorkerType,
+          hourly_rate: rate,
+          quantity: 1,
+          time_value: manualInput.labor_hours,
+          time_unit: 'Stunden'
+        }
+      ]
     }]);
     setManualInput({ name: '', unit: 'm²', labor_hours: 0, material_price: 0 });
     // Removed setShowAddModal(false) to allow multiple selection
@@ -322,12 +377,27 @@ export default function LiveCalculator() {
       selectedPositions
         .filter(p => p.tradeName === tradeName && p.quantity > 0)
         .forEach(p => {
-          const rate = getRate(p.tradeId, p.worker_type);
-          const laborCost = p.labor_hours * rate * p.quantity;
+          let laborCost = 0;
+          let laborDetail = '';
+          if (p.labor_components && p.labor_components.length > 0) {
+            laborCost = p.labor_components.reduce((lAcc, comp) => {
+              let multiplier = 1;
+              if (comp.time_unit === 'Tage') multiplier = 8;
+              else if (comp.time_unit === 'Wochen') multiplier = 40;
+              else if (comp.time_unit === 'Monate') multiplier = 160;
+              return lAcc + (comp.hourly_rate * comp.quantity * comp.time_value * multiplier);
+            }, 0);
+            laborDetail = p.labor_components.map(c => `${c.quantity}x ${c.worker_type}`).join(', ');
+          } else {
+            const rate = getRate(p.tradeId, p.worker_type);
+            laborCost = p.labor_hours * rate * p.quantity;
+            laborDetail = p.worker_type || selectedWorkerType;
+          }
+          
           const materialCost = p.material_price * p.quantity * (1 + wastePercentage / 100);
           const totalPos = laborCost + materialCost;
           tableData.push([
-            `${p.name}${p.description ? '\n' + p.description : ''}\n(${p.worker_type || selectedWorkerType})`,
+            `${p.name}${p.description ? '\n' + p.description : ''}\n(${laborDetail})`,
             `${p.quantity} ${p.unit}`,
             `${(totalPos / p.quantity).toFixed(2)} €`,
             `${totalPos.toFixed(2)} €`
@@ -340,6 +410,7 @@ export default function LiveCalculator() {
       head: [['Leistung / Position', 'Menge / Einheit', 'Einh. Preis (inkl. Verschnitt)', 'Gesamtbetrag']],
       body: tableData,
       foot: [
+        ...(siteSetup.enabled ? [['', '', 'Baustelle einrichten', `${siteSetup.price.toFixed(2)} €`]] : []),
         ['', '', 'Zwischensumme (Netto)', `${subtotal.toFixed(2)} €`],
         ...(discount > 0 ? [['', '', `Rabatt (${discount}%)`, `-${discountAmount.toFixed(2)} €`]] : []),
         ['', '', 'MwSt. (19%)', `${tax.toFixed(2)} €`],
@@ -731,8 +802,8 @@ export default function LiveCalculator() {
                                               <label className="text-[9px] font-bold text-slate-400 uppercase mb-1 block">Länge (m)</label>
                                               <input 
                                                 type="number"
-                                                value={pos.length || 0}
-                                                onChange={(e) => updateManualPos(pos.id, 'length', parseFloat(e.target.value) || 0)}
+                                                value={pos.length ?? ''}
+                                                onChange={(e) => updateManualPos(pos.id, 'length', e.target.value === '' ? undefined : parseFloat(e.target.value))}
                                                 className="w-full bg-white border border-slate-200 rounded-lg py-1.5 px-3 text-xs font-bold text-brand-dark focus:ring-1 focus:ring-brand-primary outline-none"
                                               />
                                             </div>
@@ -742,8 +813,8 @@ export default function LiveCalculator() {
                                               <label className="text-[9px] font-bold text-slate-400 uppercase mb-1 block">Breite (m)</label>
                                               <input 
                                                 type="number"
-                                                value={pos.width || 0}
-                                                onChange={(e) => updateManualPos(pos.id, 'width', parseFloat(e.target.value) || 0)}
+                                                value={pos.width ?? ''}
+                                                onChange={(e) => updateManualPos(pos.id, 'width', e.target.value === '' ? undefined : parseFloat(e.target.value))}
                                                 className="w-full bg-white border border-slate-200 rounded-lg py-1.5 px-3 text-xs font-bold text-brand-dark focus:ring-1 focus:ring-brand-primary outline-none"
                                               />
                                             </div>
@@ -753,8 +824,8 @@ export default function LiveCalculator() {
                                               <label className="text-[9px] font-bold text-slate-400 uppercase mb-1 block">Höhe/Tiefe (m)</label>
                                               <input 
                                                 type="number"
-                                                value={pos.height || pos.depth || 0}
-                                                onChange={(e) => updateManualPos(pos.id, 'height', parseFloat(e.target.value) || 0)}
+                                                value={pos.height ?? pos.depth ?? ''}
+                                                onChange={(e) => updateManualPos(pos.id, 'height', e.target.value === '' ? undefined : parseFloat(e.target.value))}
                                                 className="w-full bg-white border border-slate-200 rounded-lg py-1.5 px-3 text-xs font-bold text-brand-dark focus:ring-1 focus:ring-brand-primary outline-none"
                                               />
                                             </div>
@@ -767,6 +838,108 @@ export default function LiveCalculator() {
                                         </motion.div>
                                       )}
                                     </AnimatePresence>
+
+                                    {/* Labor Components */}
+                                    <div className="mt-4 space-y-3">
+                                      <div className="flex items-center justify-between">
+                                        <h5 className="text-[9px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                                          <HardHat size={12} /> Personaleinsatz
+                                        </h5>
+                                        <button 
+                                          onClick={() => {
+                                            const newComp: QuoteItemLabor = {
+                                              worker_type: 'Geselle',
+                                              hourly_rate: getRate(pos.tradeId, 'Geselle'),
+                                              quantity: 1,
+                                              time_value: pos.labor_hours,
+                                              time_unit: 'Stunden'
+                                            };
+                                            updateManualPos(pos.id, 'labor_components', [...(pos.labor_components || []), newComp]);
+                                          }}
+                                          className="text-[9px] font-bold text-brand-primary uppercase tracking-widest hover:text-brand-dark transition-colors flex items-center gap-1"
+                                        >
+                                          <Plus size={10} /> Personal hinzufügen
+                                        </button>
+                                      </div>
+                                      
+                                      <div className="space-y-2">
+                                        {pos.labor_components?.map((comp, idx) => (
+                                          <div key={idx} className="grid grid-cols-1 md:grid-cols-5 gap-2 p-3 bg-slate-50 border border-slate-100 rounded-xl items-end shadow-sm">
+                                            <div>
+                                              <label className="text-[8px] font-bold text-slate-400 uppercase mb-0.5 block">Typ</label>
+                                              <select 
+                                                value={comp.worker_type}
+                                                onChange={(e) => {
+                                                  const newComps = [...(pos.labor_components || [])];
+                                                  newComps[idx].worker_type = e.target.value as any;
+                                                  newComps[idx].hourly_rate = getRate(pos.tradeId, e.target.value as any);
+                                                  updateManualPos(pos.id, 'labor_components', newComps);
+                                                }}
+                                                className="w-full p-1.5 bg-white border border-slate-100 rounded-lg text-[10px] font-bold text-brand-dark outline-none"
+                                              >
+                                                <option value="Helfer">Helfer</option>
+                                                <option value="Geselle">Geselle</option>
+                                                <option value="Meister">Meister</option>
+                                              </select>
+                                            </div>
+                                            <div>
+                                              <label className="text-[8px] font-bold text-slate-400 uppercase mb-0.5 block">Anz.</label>
+                                              <input 
+                                                type="number" 
+                                                value={comp.quantity}
+                                                onChange={(e) => {
+                                                  const newComps = [...(pos.labor_components || [])];
+                                                  newComps[idx].quantity = parseInt(e.target.value) || 1;
+                                                  updateManualPos(pos.id, 'labor_components', newComps);
+                                                }}
+                                                className="w-full p-1.5 bg-white border border-slate-100 rounded-lg text-[10px] font-bold text-brand-dark outline-none"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="text-[8px] font-bold text-slate-400 uppercase mb-0.5 block">Zeit</label>
+                                              <input 
+                                                type="number" 
+                                                value={comp.time_value}
+                                                onChange={(e) => {
+                                                  const newComps = [...(pos.labor_components || [])];
+                                                  newComps[idx].time_value = parseFloat(e.target.value) || 0;
+                                                  updateManualPos(pos.id, 'labor_components', newComps);
+                                                }}
+                                                className="w-full p-1.5 bg-white border border-slate-100 rounded-lg text-[10px] font-bold text-brand-dark outline-none"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="text-[8px] font-bold text-slate-400 uppercase mb-0.5 block">Einheit</label>
+                                              <select 
+                                                value={comp.time_unit}
+                                                onChange={(e) => {
+                                                  const newComps = [...(pos.labor_components || [])];
+                                                  newComps[idx].time_unit = e.target.value as any;
+                                                  updateManualPos(pos.id, 'labor_components', newComps);
+                                                }}
+                                                className="w-full p-1.5 bg-white border border-slate-100 rounded-lg text-[10px] font-bold text-brand-dark outline-none"
+                                              >
+                                                <option value="Stunden">Std.</option>
+                                                <option value="Tage">Tage</option>
+                                                <option value="Wochen">Woch.</option>
+                                                <option value="Monate">Mon.</option>
+                                              </select>
+                                            </div>
+                                            <div className="flex items-center justify-end gap-1">
+                                              <button 
+                                                onClick={() => {
+                                                  const newComps = pos.labor_components?.filter((_, i) => i !== idx);
+                                                  updateManualPos(pos.id, 'labor_components', newComps);
+                                                }}
+                                                className="p-1.5 text-slate-300 hover:text-red-500 transition-colors"
+                                              >
+                                                <X size={12} />
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
                                   </div>
 
                                   <div className="flex items-center justify-between md:justify-end gap-4 border-t md:border-t-0 pt-4 md:pt-0">
@@ -803,8 +976,19 @@ export default function LiveCalculator() {
                                   {selectedPositions
                                     .filter(p => p.tradeName === tradeName)
                                     .reduce((acc, p) => {
-                                      const rate = getRate(p.tradeId, p.worker_type);
-                                      const laborCost = p.labor_hours * rate * p.quantity;
+                                      let laborCost = 0;
+                                      if (p.labor_components && p.labor_components.length > 0) {
+                                        laborCost = p.labor_components.reduce((lAcc, comp) => {
+                                          let multiplier = 1;
+                                          if (comp.time_unit === 'Tage') multiplier = 8;
+                                          else if (comp.time_unit === 'Wochen') multiplier = 40;
+                                          else if (comp.time_unit === 'Monate') multiplier = 160;
+                                          return lAcc + (comp.hourly_rate * comp.quantity * comp.time_value * multiplier);
+                                        }, 0);
+                                      } else {
+                                        const rate = getRate(p.tradeId, p.worker_type);
+                                        laborCost = p.labor_hours * rate * p.quantity;
+                                      }
                                       const materialCost = p.material_price * p.quantity * (1 + wastePercentage / 100);
                                       return acc + laborCost + materialCost;
                                     }, 0).toFixed(2)} €
@@ -875,15 +1059,30 @@ export default function LiveCalculator() {
                     <div className="flex-1 h-px bg-white/10" />
                   </div>
                   {selectedPositions.filter(p => p.tradeName === tradeName && p.quantity > 0).map(p => {
-                    const rate = getRate(p.tradeId, p.worker_type);
-                    const laborCost = p.labor_hours * rate * p.quantity;
+                    let laborCost = 0;
+                    if (p.labor_components && p.labor_components.length > 0) {
+                      laborCost = p.labor_components.reduce((lAcc, comp) => {
+                        let multiplier = 1;
+                        if (comp.time_unit === 'Tage') multiplier = 8;
+                        else if (comp.time_unit === 'Wochen') multiplier = 40;
+                        else if (comp.time_unit === 'Monate') multiplier = 160;
+                        return lAcc + (comp.hourly_rate * comp.quantity * comp.time_value * multiplier);
+                      }, 0);
+                    } else {
+                      const rate = getRate(p.tradeId, p.worker_type);
+                      laborCost = p.labor_hours * rate * p.quantity;
+                    }
                     const materialCost = p.material_price * p.quantity * (1 + wastePercentage / 100);
                     const totalPos = laborCost + materialCost;
                     return (
                       <div key={p.id} className="flex justify-between items-start text-sm gap-4 pl-2">
                         <span className="text-white/60 leading-tight">
                           {p.name} <br/>
-                          <span className="text-[10px] text-white/30">{p.quantity} {p.unit} • {p.worker_type || selectedWorkerType}</span>
+                          <span className="text-[10px] text-white/30">
+                            {p.quantity} {p.unit} • {p.labor_components && p.labor_components.length > 0 
+                              ? `${p.labor_components.length} Pers.` 
+                              : (p.worker_type || selectedWorkerType)}
+                          </span>
                         </span>
                         <span className="font-bold whitespace-nowrap">{totalPos.toFixed(2)} €</span>
                       </div>
@@ -899,6 +1098,26 @@ export default function LiveCalculator() {
             <div className="h-px bg-white/10 my-8" />
 
             <div className="space-y-4">
+              <div className="flex justify-between items-center text-sm">
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-5 rounded-full transition-all relative cursor-pointer ${siteSetup.enabled ? 'bg-brand-secondary' : 'bg-white/10'}`} onClick={() => setSiteSetup(prev => ({ ...prev, enabled: !prev.enabled }))}>
+                    <div className={`absolute top-1 w-3 h-3 rounded-full bg-white transition-all ${siteSetup.enabled ? 'left-6' : 'left-1'}`} />
+                  </div>
+                  <span className="text-white/60">Baustelle einrichten</span>
+                </div>
+                {siteSetup.enabled && (
+                  <div className="flex items-center gap-2">
+                    <input 
+                      type="number" 
+                      value={siteSetup.price}
+                      onChange={(e) => setSiteSetup(prev => ({ ...prev, price: parseFloat(e.target.value) || 0 }))}
+                      className="w-16 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs font-bold text-brand-secondary outline-none"
+                    />
+                    <span className="text-xs font-bold">€</span>
+                  </div>
+                )}
+              </div>
+              
               <div className="flex justify-between items-center text-sm">
                 <span className="text-white/40">Zwischensumme</span>
                 <span className="font-medium">{subtotal.toFixed(2)} €</span>

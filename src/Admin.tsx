@@ -183,9 +183,9 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
     setLoading(true);
     try {
       const res = await fetch('/api/settings', {
-        method: 'POST',
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ settings })
+        body: JSON.stringify(settings)
       });
       if (res.ok) {
         setMessage({ type: 'success', text: 'Einstellungen gespeichert' });
@@ -193,7 +193,8 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
     } catch (err) {
       setMessage({ type: 'error', text: 'Fehler beim Speichern' });
     } finally {
-      setLoading(false);
+      setLoading(true);
+      setTimeout(() => setLoading(false), 500);
     }
   };
 
@@ -2011,6 +2012,7 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
               <QuoteBuilder 
                 initialProjectId={selectedProjectId || undefined} 
                 initialView={selectedProjectId ? 'edit' : 'list'} 
+                userId={user?.uid}
               />
             </motion.div>
           )}
@@ -2114,6 +2116,19 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
 
                     <div className="flex items-center justify-between p-6 bg-slate-50 rounded-2xl">
                       <div>
+                        <h4 className="font-bold text-brand-dark">Kostenpflichtige Angebote</h4>
+                        <p className="text-sm text-slate-400">Angebote nach dem ersten kostenlosen Angebot kostenpflichtig machen.</p>
+                      </div>
+                      <button 
+                        onClick={() => setSettings({ ...settings, paid_offers_enabled: settings.paid_offers_enabled === 'true' ? 'false' : 'true' })}
+                        className={`w-14 h-8 rounded-full relative transition-all ${settings.paid_offers_enabled === 'true' ? 'bg-brand-primary' : 'bg-slate-200'}`}
+                      >
+                        <div className={`absolute top-1 w-6 h-6 bg-white rounded-full shadow-sm transition-all ${settings.paid_offers_enabled === 'true' ? 'left-7' : 'left-1'}`} />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between p-6 bg-slate-50 rounded-2xl">
+                      <div>
                         <h4 className="font-bold text-brand-dark">Abonnement & Abrechnung</h4>
                         <p className="text-sm text-slate-400">Verwalten Sie Ihren SaaS-Tarif (Stripe).</p>
                       </div>
@@ -2197,7 +2212,7 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
                         disabled={loading}
                         className="mt-8 bg-brand-dark text-white px-8 py-3 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-brand-primary transition-all"
                       >
-                        Firmendaten speichern
+                        Einstellungen speichern
                       </button>
                     </div>
                   </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Link, useLocation, useSearchParams, useNavigate } from 'react-router-dom';
 import Admin from './Admin';
 import { 
   Hammer, 
@@ -31,7 +31,9 @@ import {
   Video,
   LayoutDashboard,
   LogOut,
-  Users
+  Users,
+  Key,
+  AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence, useScroll, useTransform } from 'motion/react';
 import { Accordion } from './components/Accordion';
@@ -41,9 +43,9 @@ import LiveCalculator from './components/LiveCalculator';
 import ServiceCatalog from './components/ServiceCatalog';
 import QuoteBuilder from './components/QuoteBuilder';
 
-import { auth, db } from './firebase';
+import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 
 // --- Types ---
 interface CalcPosition {
@@ -69,7 +71,7 @@ interface LaborRate {
 
 type ContentMap = { [key: string]: string };
 type MediaItem = {
-  id: number;
+  id: string;
   type: 'image' | 'video';
   url: string;
   category: string;
@@ -123,9 +125,194 @@ export default function App() {
         <Route path="/impressum" element={<LegalPage title="Impressum" content={<ImpressumContent />} />} />
         <Route path="/datenschutz" element={<LegalPage title="Datenschutz" content={<DatenschutzContent />} />} />
         <Route path="/agb" element={<LegalPage title="AGB" content={<AGBContent />} />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/" element={<MainSite />} />
       </Routes>
     </Router>
+  );
+}
+
+function ForgotPassword() {
+  const [email, setEmail] = useState('');
+  const [status, setStatus] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setStatus(null);
+
+    try {
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStatus({ type: 'success', text: data.message });
+      } else {
+        setStatus({ type: 'error', text: data.message });
+      }
+    } catch (err) {
+      setStatus({ type: 'error', text: 'Ein Fehler ist aufgetreten. Bitte versuchen Sie es später erneut.' });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-brand-accent flex items-center justify-center px-6 py-12">
+      <div className="max-w-md w-full bg-white rounded-[2.5rem] p-10 shadow-xl border border-slate-100">
+        <div className="text-center mb-8">
+          <div className="w-16 h-16 bg-brand-primary/10 text-brand-primary rounded-2xl flex items-center justify-center mx-auto mb-6">
+            <Key size={32} />
+          </div>
+          <h1 className="text-3xl font-black text-brand-dark tracking-tighter mb-2">Passwort vergessen?</h1>
+          <p className="text-slate-500">Geben Sie Ihre E-Mail-Adresse ein, um einen Link zum Zurücksetzen zu erhalten.</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <Input 
+            label="E-Mail-Adresse" 
+            type="email" 
+            placeholder="ihre@email.de" 
+            required 
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+          />
+
+          {status && (
+            <div className={`p-4 rounded-xl flex items-start gap-3 ${status.type === 'success' ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-red-50 text-red-700 border border-red-100'}`}>
+              {status.type === 'success' ? <CheckCircle2 size={18} className="mt-0.5" /> : <AlertCircle size={18} className="mt-0.5" />}
+              <p className="text-sm font-medium">{status.text}</p>
+            </div>
+          )}
+
+          <button 
+            type="submit" 
+            disabled={isLoading}
+            className="w-full bg-brand-primary text-white font-bold py-4 rounded-xl hover:bg-brand-primary/90 transition-all shadow-lg shadow-brand-primary/20 flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {isLoading ? 'Wird gesendet...' : 'Link senden'}
+          </button>
+
+          <div className="text-center">
+            <Link to="/" className="text-sm font-bold text-brand-primary hover:underline">
+              Zurück zum Login
+            </Link>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function ResetPassword() {
+  const [searchParams] = useSearchParams();
+  const token = searchParams.get('token');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [status, setStatus] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const navigate = useNavigate();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPassword !== confirmPassword) {
+      setStatus({ type: 'error', text: 'Die Passwörter stimmen nicht überein.' });
+      return;
+    }
+    if (newPassword.length < 6) {
+      setStatus({ type: 'error', text: 'Das Passwort muss mindestens 6 Zeichen lang sein.' });
+      return;
+    }
+
+    setIsLoading(true);
+    setStatus(null);
+
+    try {
+      const res = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, newPassword })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStatus({ type: 'success', text: data.message });
+        setTimeout(() => navigate('/'), 3000);
+      } else {
+        setStatus({ type: 'error', text: data.message });
+      }
+    } catch (err) {
+      setStatus({ type: 'error', text: 'Ein Fehler ist aufgetreten. Bitte versuchen Sie es später erneut.' });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (!token) {
+    return (
+      <div className="min-h-screen bg-brand-accent flex items-center justify-center px-6">
+        <div className="max-w-md w-full bg-white rounded-[2.5rem] p-10 shadow-xl text-center">
+          <AlertCircle size={48} className="text-red-500 mx-auto mb-6" />
+          <h1 className="text-2xl font-black text-brand-dark mb-4">Ungültiger Link</h1>
+          <p className="text-slate-500 mb-8">Dieser Link zum Zurücksetzen des Passworts ist ungültig oder abgelaufen.</p>
+          <Link to="/" className="bg-brand-primary text-white font-bold py-3 px-8 rounded-xl hover:bg-brand-primary/90 transition-all inline-block">
+            Zur Startseite
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-brand-accent flex items-center justify-center px-6 py-12">
+      <div className="max-w-md w-full bg-white rounded-[2.5rem] p-10 shadow-xl border border-slate-100">
+        <div className="text-center mb-8">
+          <div className="w-16 h-16 bg-brand-primary/10 text-brand-primary rounded-2xl flex items-center justify-center mx-auto mb-6">
+            <Shield size={32} />
+          </div>
+          <h1 className="text-3xl font-black text-brand-dark tracking-tighter mb-2">Neues Passwort</h1>
+          <p className="text-slate-500">Wählen Sie ein neues, sicheres Passwort für Ihr Konto.</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <Input 
+            label="Neues Passwort" 
+            type="password" 
+            placeholder="••••••••" 
+            required 
+            value={newPassword}
+            onChange={e => setNewPassword(e.target.value)}
+          />
+          <Input 
+            label="Passwort bestätigen" 
+            type="password" 
+            placeholder="••••••••" 
+            required 
+            value={confirmPassword}
+            onChange={e => setConfirmPassword(e.target.value)}
+          />
+
+          {status && (
+            <div className={`p-4 rounded-xl flex items-start gap-3 ${status.type === 'success' ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-red-50 text-red-700 border border-red-100'}`}>
+              {status.type === 'success' ? <CheckCircle2 size={18} className="mt-0.5" /> : <AlertCircle size={18} className="mt-0.5" />}
+              <p className="text-sm font-medium">{status.text}</p>
+            </div>
+          )}
+
+          <button 
+            type="submit" 
+            disabled={isLoading}
+            className="w-full bg-brand-primary text-white font-bold py-4 rounded-xl hover:bg-brand-primary/90 transition-all shadow-lg shadow-brand-primary/20 flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {isLoading ? 'Wird gespeichert...' : 'Passwort speichern'}
+          </button>
+        </form>
+      </div>
+    </div>
   );
 }
 
@@ -141,16 +328,49 @@ function MainSite() {
   const { scrollY } = useScroll();
   const [isScrolled, setIsScrolled] = useState(false);
 
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [profileForm, setProfileForm] = useState({ firstName: '', lastName: '', phone: '', address: '', email: '' });
+
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setUser(user);
-      if (user) {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        // Authenticate with our backend
+        try {
+          const res = await fetch('/api/auth/google-login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              googleId: firebaseUser.uid, 
+              email: firebaseUser.email, 
+              name: firebaseUser.displayName 
+            })
+          });
+          const data = await res.json();
+          if (data.success) {
+            setUser({ ...firebaseUser, ...data.user });
+            if (!data.isProfileComplete) {
+              setProfileForm({
+                firstName: data.user.first_name || firebaseUser.displayName?.split(' ')[0] || '',
+                lastName: data.user.last_name || firebaseUser.displayName?.split(' ')[1] || '',
+                phone: data.user.phone || '',
+                address: data.user.address || '',
+                email: data.user.email || firebaseUser.email || ''
+              });
+              setIsProfileModalOpen(true);
+            }
+          }
+        } catch (err) {
+          console.error('Backend auth error:', err);
+          setUser(firebaseUser);
+        }
+
         const adminEmail = "altankg@gmail.com";
-        let isUserAdmin = user.email === adminEmail && user.emailVerified;
+        let isUserAdmin = firebaseUser.email === adminEmail && firebaseUser.emailVerified;
         
         if (!isUserAdmin) {
           try {
-            const userDoc = await getDoc(doc(db, 'users', user.uid));
+            const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
             if (userDoc.exists() && userDoc.data().role === 'admin') {
               isUserAdmin = true;
             }
@@ -160,16 +380,50 @@ function MainSite() {
         }
         setIsAdmin(isUserAdmin);
       } else {
+        setUser(null);
         setIsAdmin(false);
       }
     });
     return () => unsubscribe();
   }, []);
 
-  const handleLogin = async () => {
+  const handleProfileSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    
+    try {
+      const res = await fetch('/api/user/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          userId: user.uid,
+          ...profileForm
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setIsProfileModalOpen(false);
+        // Refresh user data
+        const profileRes = await fetch(`/api/user/profile?userId=${user.uid}`);
+        const profileData = await profileRes.json();
+        if (profileData.success) {
+          setUser({ ...user, ...profileData.user });
+        }
+      }
+    } catch (err) {
+      console.error('Profile update error:', err);
+    }
+  };
+
+  const handleLogin = () => {
+    setIsLoginModalOpen(true);
+  };
+
+  const handleGoogleLogin = async () => {
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
+      setIsLoginModalOpen(false);
     } catch (err) {
       console.error('Login Fehler:', err);
     }
@@ -190,23 +444,28 @@ function MainSite() {
   }, [scrollY]);
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    // Fetch content and media from Firestore
+    const contentUnsubscribe = onSnapshot(collection(db, 'content'), (snapshot) => {
+      const contentMap: ContentMap = {};
+      snapshot.forEach((doc) => {
+        contentMap[doc.id] = doc.data().value;
+      });
+      setContent(contentMap);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'content'));
 
-  const fetchData = async () => {
-    try {
-      const [contentRes, mediaRes] = await Promise.all([
-        fetch('/api/content'),
-        fetch('/api/media')
-      ]);
-      const contentData = await contentRes.json();
-      const mediaData = await mediaRes.json();
-      setContent(contentData);
-      setMedia(mediaData);
-    } catch (err) {
-      console.error('Error fetching data:', err);
-    }
-  };
+    const mediaUnsubscribe = onSnapshot(query(collection(db, 'media'), orderBy('sort_order', 'asc')), (snapshot) => {
+      const mediaList: MediaItem[] = [];
+      snapshot.forEach((doc) => {
+        mediaList.push({ id: doc.id, ...doc.data() } as MediaItem);
+      });
+      setMedia(mediaList);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'media'));
+
+    return () => {
+      contentUnsubscribe();
+      mediaUnsubscribe();
+    };
+  }, []);
 
   const handleContactSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -249,6 +508,180 @@ function MainSite() {
 
   return (
     <div className="min-h-screen bg-brand-paper font-sans text-brand-dark selection:bg-brand-primary/20 scroll-smooth">
+      {/* Login Modal */}
+      <AnimatePresence>
+        {isLoginModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsLoginModalOpen(false)}
+              className="absolute inset-0 bg-brand-dark/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-white w-full max-w-md rounded-[2.5rem] p-10 shadow-2xl relative z-10 overflow-hidden"
+            >
+              <button 
+                onClick={() => setIsLoginModalOpen(false)}
+                className="absolute top-6 right-6 text-slate-400 hover:text-brand-dark transition-colors"
+              >
+                <X size={24} />
+              </button>
+
+              <div className="text-center mb-8">
+                <div className="w-16 h-16 bg-brand-primary/10 text-brand-primary rounded-2xl flex items-center justify-center mx-auto mb-6">
+                  <Users size={32} />
+                </div>
+                <h3 className="text-3xl font-black text-brand-dark tracking-tighter">Willkommen zurück</h3>
+                <p className="text-slate-500">Melden Sie sich an, um fortzufahren.</p>
+              </div>
+
+              <div className="space-y-4">
+                <button 
+                  onClick={handleGoogleLogin}
+                  className="w-full flex items-center justify-center gap-4 bg-white border border-slate-200 py-4 rounded-xl font-bold text-brand-dark hover:bg-slate-50 transition-all shadow-sm"
+                >
+                  <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="Google" />
+                  Mit Google anmelden
+                </button>
+
+                <div className="relative py-4">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-slate-100"></div>
+                  </div>
+                  <div className="relative flex justify-center text-xs uppercase tracking-widest font-bold">
+                    <span className="bg-white px-4 text-slate-400">Oder mit E-Mail</span>
+                  </div>
+                </div>
+
+                <form className="space-y-4" onSubmit={(e) => {
+                  e.preventDefault();
+                  // For demo purposes, we'll just show an alert
+                  alert('E-Mail-Login ist in dieser Demo nur für Google-Konten vorkonfiguriert. Bitte nutzen Sie Google Login.');
+                }}>
+                  <Input label="E-Mail" placeholder="ihre@email.de" type="email" required />
+                  <Input label="Passwort" placeholder="••••••••" type="password" required />
+                  
+                  <div className="flex justify-end">
+                    <Link 
+                      to="/forgot-password" 
+                      onClick={() => setIsLoginModalOpen(false)}
+                      className="text-sm font-bold text-brand-primary hover:underline"
+                    >
+                      Passwort vergessen?
+                    </Link>
+                  </div>
+
+                  <button 
+                    type="submit"
+                    className="w-full bg-brand-primary text-white font-bold py-4 rounded-xl hover:bg-brand-primary/90 transition-all shadow-lg shadow-brand-primary/20"
+                  >
+                    Anmelden
+                  </button>
+                </form>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Profile Completion Modal */}
+      <AnimatePresence>
+        {isProfileModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-brand-dark/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative bg-white rounded-[2.5rem] shadow-2xl w-full max-w-lg overflow-hidden"
+            >
+              <div className="p-8 md:p-12">
+                <div className="mb-8">
+                  <h3 className="text-3xl font-black text-brand-dark tracking-tighter mb-2">Profil vervollständigen</h3>
+                  <p className="text-slate-500 font-medium">Bitte geben Sie Ihre Daten an, um Angebote erstellen zu können.</p>
+                </div>
+                
+                <form onSubmit={handleProfileSubmit} className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 ml-1">Vorname</label>
+                      <input 
+                        required
+                        type="text"
+                        value={profileForm.firstName}
+                        onChange={e => setProfileForm({ ...profileForm, firstName: e.target.value })}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary outline-none transition-all"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 ml-1">Nachname</label>
+                      <input 
+                        required
+                        type="text"
+                        value={profileForm.lastName}
+                        onChange={e => setProfileForm({ ...profileForm, lastName: e.target.value })}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 ml-1">E-Mail</label>
+                    <input 
+                      required
+                      type="email"
+                      value={profileForm.email}
+                      onChange={e => setProfileForm({ ...profileForm, email: e.target.value })}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary outline-none transition-all"
+                    />
+                  </div>
+                  
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 ml-1">Handynummer</label>
+                    <input 
+                      required
+                      type="tel"
+                      placeholder="+49 123 4567890"
+                      value={profileForm.phone}
+                      onChange={e => setProfileForm({ ...profileForm, phone: e.target.value })}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary outline-none transition-all"
+                    />
+                  </div>
+                  
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 ml-1">Adresse</label>
+                    <textarea 
+                      required
+                      rows={2}
+                      value={profileForm.address}
+                      onChange={e => setProfileForm({ ...profileForm, address: e.target.value })}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary outline-none transition-all resize-none"
+                    />
+                  </div>
+                  
+                  <button 
+                    type="submit"
+                    className="w-full py-4 bg-brand-primary text-white rounded-2xl font-bold hover:bg-brand-secondary transition-all shadow-xl shadow-brand-primary/20 mt-4"
+                  >
+                    Profil speichern
+                  </button>
+                </form>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Modern Navigation */}
       <motion.nav 
         id="main-nav"
@@ -1170,7 +1603,7 @@ function ContactInfo({ icon, title, content }: { icon: React.ReactNode, title: s
   );
 }
 
-function Input({ label, placeholder, type = "text", value, onChange, className = "" }: { label: string, placeholder: string, type?: string, value?: string, onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void, className?: string }) {
+function Input({ label, placeholder, type = "text", value, onChange, className = "", required = false }: { label: string, placeholder: string, type?: string, value?: string, onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void, className?: string, required?: boolean }) {
   return (
     <div className="space-y-2">
       <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">{label}</label>
@@ -1178,6 +1611,7 @@ function Input({ label, placeholder, type = "text", value, onChange, className =
         type={type} 
         value={value}
         onChange={onChange}
+        required={required}
         className={`w-full bg-slate-50 border-none rounded-2xl p-4 outline-none focus:ring-2 focus:ring-brand-primary transition-all ${className}`}
         placeholder={placeholder}
       />
