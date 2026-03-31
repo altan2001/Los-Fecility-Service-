@@ -14,13 +14,22 @@ import {
   X
 } from 'lucide-react';
 
-interface PlanAnalysisResult {
-  rooms: {
-    name: string;
-    area: number; // m2
-    perimeter: number; // lfm
-    features: string[];
+interface Room {
+  name: string;
+  area: number; // m2
+  perimeter: number; // lfm
+  features: string[];
+  box?: [number, number, number, number]; // [ymin, xmin, ymax, xmax]
+  suggested_services?: {
+    trade: string;
+    service: string;
+    unit: string;
+    quantity: number;
   }[];
+}
+
+interface PlanAnalysisResult {
+  rooms: Room[];
   summary: {
     totalArea: number;
     totalWallLength: number;
@@ -38,6 +47,9 @@ export default function PlanAnalyzer({ onApplyResults }: PlanAnalyzerProps) {
   const [result, setResult] = useState<PlanAnalysisResult | null>(null);
   const [selectedRooms, setSelectedRooms] = useState<number[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  const [scaleReference, setScaleReference] = useState({ object: 'Tür', length: 0.88 });
+  const [isCalibrating, setIsCalibrating] = useState(false);
 
   useEffect(() => {
     if (result) {
@@ -59,6 +71,7 @@ export default function PlanAnalyzer({ onApplyResults }: PlanAnalyzerProps) {
       setPreviewUrl(url);
       setResult(null);
       setError(null);
+      setIsCalibrating(true);
     }
   };
 
@@ -95,19 +108,36 @@ export default function PlanAnalyzer({ onApplyResults }: PlanAnalyzerProps) {
                 },
               },
               {
-                text: `Analysiere diesen Grundriss/Bauplan. 
-                Extrahiere alle Räume mit ihren geschätzten Flächen (m²) und Umfängen (lfm).
-                Gib das Ergebnis als valides JSON-Objekt zurück mit folgendem Schema:
+                text: `Analysiere diesen Grundriss/Bauplan hochpräzise. 
+                Referenz für den Maßstab: Eine ${scaleReference.object} entspricht ca. ${scaleReference.length}m.
+                
+                Aufgaben:
+                1. Identifiziere alle Räume und gib für jeden Raum eine Bounding Box im Format [ymin, xmin, ymax, xmax] an (normalisiert auf 0-1000).
+                2. Berechne Fläche (m²) und Umfang (lfm) basierend auf der Maßstabsreferenz.
+                3. Erkenne Besonderheiten (Fenster, Türen, Heizkörper, Steckdosen).
+                4. Schlage passende Handwerksleistungen vor.
+                
+                Gib das Ergebnis als valides JSON-Objekt zurück:
                 {
                   "rooms": [
-                    { "name": "Wohnzimmer", "area": 25.5, "perimeter": 20.0, "features": ["Fenster", "Tür"] }
+                    { 
+                      "name": "Wohnzimmer", 
+                      "area": 25.5, 
+                      "perimeter": 20.0, 
+                      "box": [100, 100, 400, 500],
+                      "features": ["3 Fenster", "1 Balkontür", "5 Steckdosen"],
+                      "suggested_services": [
+                        { "trade": "Bodenleger", "service": "Parkett verlegen", "unit": "m²", "quantity": 25.5 },
+                        { "trade": "Maler", "service": "Wandanstrich", "unit": "m²", "quantity": 60.0 }
+                      ]
+                    }
                   ],
                   "summary": {
                     "totalArea": 120.5,
                     "totalWallLength": 85.0
                   }
                 }
-                Wichtig: Antworte NUR mit dem JSON-Objekt, ohne Markdown-Formatierung.`,
+                Wichtig: Antworte NUR mit dem JSON-Objekt.`,
               },
             ],
           },
@@ -154,8 +184,89 @@ export default function PlanAnalyzer({ onApplyResults }: PlanAnalyzerProps) {
           </label>
         ) : (
           <div className="space-y-6">
-            <div id="plan-preview-container" className="relative rounded-[2rem] overflow-hidden border border-slate-100 shadow-inner bg-slate-100 aspect-video">
+            <div id="plan-preview-container" className="relative rounded-[2rem] overflow-hidden border border-slate-100 shadow-inner bg-slate-100 aspect-video group">
               <img src={previewUrl} alt="Plan Preview" className="w-full h-full object-contain" />
+              
+              {/* Bounding Box Overlays */}
+              {result && result.rooms.map((room, idx) => {
+                if (!room.box) return null;
+                const [ymin, xmin, ymax, xmax] = room.box;
+                const isSelected = selectedRooms.includes(idx);
+                
+                return (
+                  <motion.div
+                    key={`box-${idx}`}
+                    initial={{ opacity: 0 }}
+                    animate={{ 
+                      opacity: 1,
+                      scale: isSelected ? 1 : 0.98
+                    }}
+                    onClick={() => toggleRoom(idx)}
+                    style={{
+                      position: 'absolute',
+                      top: `${ymin / 10}%`,
+                      left: `${xmin / 10}%`,
+                      width: `${(xmax - xmin) / 10}%`,
+                      height: `${(ymax - ymin) / 10}%`,
+                      zIndex: isSelected ? 20 : 10,
+                      cursor: 'pointer',
+                    }}
+                    className="group/box"
+                  >
+                    {/* The Box Outline/Fill */}
+                    <div 
+                      className={`w-full h-full transition-all duration-300 rounded-sm flex flex-col items-center justify-center border-2 ${
+                        isSelected 
+                          ? 'bg-brand-primary/20 border-brand-primary shadow-[0_0_15px_rgba(242,125,38,0.3)]' 
+                          : 'bg-slate-400/5 border-slate-400/30 hover:bg-slate-400/10 hover:border-slate-400/50'
+                      }`}
+                    >
+                      {/* Room Label - Only visible when selected or hovered */}
+                      <AnimatePresence>
+                        {(isSelected || true) && (
+                          <motion.div 
+                            initial={{ opacity: 0, scale: 0.8 }}
+                            animate={{ 
+                              opacity: isSelected ? 1 : 0,
+                              scale: isSelected ? 1 : 0.8,
+                              y: isSelected ? 0 : 5
+                            }}
+                            className={`pointer-events-none flex flex-col items-center gap-1 p-2 rounded-xl backdrop-blur-md shadow-xl border ${
+                              isSelected 
+                                ? 'bg-brand-dark/90 text-white border-brand-primary/50' 
+                                : 'bg-white/90 text-slate-600 border-slate-200'
+                            }`}
+                          >
+                            <span className="text-[10px] font-black uppercase tracking-tighter whitespace-nowrap">
+                              {room.name}
+                            </span>
+                            {isSelected && (
+                              <div className="flex flex-col items-center gap-0.5 border-t border-white/10 pt-1 mt-1">
+                                <span className="text-[8px] font-bold flex items-center gap-1">
+                                  <Square size={8} /> {room.area.toFixed(1)} m²
+                                </span>
+                                <span className="text-[8px] font-bold flex items-center gap-1 opacity-70">
+                                  <Ruler size={8} /> {room.perimeter.toFixed(1)} lfm
+                                </span>
+                              </div>
+                            )}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+
+                    {/* Subtle indicator for non-selected rooms */}
+                    {!isSelected && (
+                      <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/box:opacity-100 transition-opacity">
+                        <div className="bg-white/80 backdrop-blur-sm px-2 py-1 rounded-lg border border-slate-200 shadow-sm">
+                          <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest">{room.name}</span>
+                        </div>
+                      </div>
+                    )}
+                  </motion.div>
+                );
+              })}
+
               <button 
                 onClick={() => { setPreviewUrl(null); setFile(null); setResult(null); }}
                 className="absolute top-4 right-4 p-2 bg-white/80 backdrop-blur-sm text-slate-600 rounded-full hover:bg-white transition-all shadow-lg"
@@ -163,6 +274,45 @@ export default function PlanAnalyzer({ onApplyResults }: PlanAnalyzerProps) {
                 <Plus className="rotate-45" size={20} />
               </button>
             </div>
+
+            {isCalibrating && !result && !isAnalyzing && (
+              <motion.div 
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="p-6 bg-brand-primary/5 rounded-3xl border border-brand-primary/10 space-y-4"
+              >
+                <div className="flex items-center gap-2 text-brand-primary mb-2">
+                  <Ruler size={20} />
+                  <h4 className="font-black uppercase tracking-widest text-xs">Maßstab kalibrieren</h4>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Referenz-Objekt</label>
+                    <select 
+                      value={scaleReference.object}
+                      onChange={e => setScaleReference({...scaleReference, object: e.target.value})}
+                      className="w-full bg-white border border-slate-100 rounded-xl py-3 px-4 outline-none font-bold text-brand-dark"
+                    >
+                      <option value="Tür">Tür (Standard)</option>
+                      <option value="Fenster">Fenster</option>
+                      <option value="Badewanne">Badewanne</option>
+                      <option value="Treppe">Treppe (Breite)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Länge in Meter</label>
+                    <input 
+                      type="number" 
+                      step="0.01"
+                      value={scaleReference.length}
+                      onChange={e => setScaleReference({...scaleReference, length: Number(e.target.value)})}
+                      className="w-full bg-white border border-slate-100 rounded-xl py-3 px-4 outline-none font-bold text-brand-dark"
+                    />
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-400 italic">Die KI nutzt dieses Objekt als Referenz, um Flächen und Längen im Plan zu berechnen.</p>
+              </motion.div>
+            )}
 
             <div className="flex justify-center">
               <button 

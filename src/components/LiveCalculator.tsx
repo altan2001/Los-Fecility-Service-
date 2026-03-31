@@ -58,7 +58,12 @@ interface LaborRate {
   hourly_rate: number;
 }
 
-export default function LiveCalculator() {
+interface LiveCalculatorProps {
+  isLoggedIn?: boolean;
+  onDownloadAttempt?: () => void;
+}
+
+export default function LiveCalculator({ isLoggedIn, onDownloadAttempt }: LiveCalculatorProps) {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [catalog, setCatalog] = useState<(Trade & { items: CalcPosition[] })[]>([]);
   const [selectedTrade, setSelectedTrade] = useState<number | null>(null);
@@ -325,6 +330,10 @@ export default function LiveCalculator() {
   };
 
   const generatePDF = () => {
+    if (!isLoggedIn && onDownloadAttempt) {
+      onDownloadAttempt();
+      return;
+    }
     const doc = new jsPDF();
     const tradeName = trades.find(t => t.id === selectedTrade)?.name || '';
     

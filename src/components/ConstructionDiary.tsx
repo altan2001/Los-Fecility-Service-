@@ -11,23 +11,25 @@ import {
   CheckCircle2,
   X,
   Paperclip,
-  File,
+  File as FileIcon,
   Image as ImageIcon,
   Upload,
   Download,
-  ChevronRight
+  ChevronRight,
+  Loader2,
+  Maximize2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface Project {
-  id: number;
+  id: string;
   name: string;
   client_name: string;
 }
 
 interface DiaryEntry {
-  id: number;
-  project_id: number;
+  id: string;
+  project_id: string;
   date: string;
   weather: string;
   temperature: number;
@@ -37,30 +39,30 @@ interface DiaryEntry {
 }
 
 interface Presence {
-  id: number;
-  diary_id: number;
+  id: string;
+  diary_id: string;
   person_name: string;
   role: string;
   hours: number;
 }
 
 interface Attachment {
-  id: number;
-  diary_id: number;
+  id: string;
+  diary_id: string;
   file_path: string;
   file_name: string;
   file_type: string;
   created_at: string;
 }
 
-export default function ConstructionDiary({ initialProjectId }: { initialProjectId?: number | null }) {
+export default function ConstructionDiary({ initialProjectId }: { initialProjectId?: string | null }) {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [selectedProject, setSelectedProject] = useState<number | null>(initialProjectId || null);
+  const [selectedProject, setSelectedProject] = useState<string | null>(initialProjectId || null);
   const [diaries, setDiaries] = useState<DiaryEntry[]>([]);
   const [showNewDiaryForm, setShowNewDiaryForm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [newDiary, setNewDiary] = useState({
-    project_id: null as number | null,
+    project_id: null as string | null,
     date: new Date().toISOString().split('T')[0],
     weather: 'Sonnig',
     temperature: 18,
@@ -74,10 +76,39 @@ export default function ConstructionDiary({ initialProjectId }: { initialProject
   const [selectedDiaryForAttachments, setSelectedDiaryForAttachments] = useState<DiaryEntry | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [analyzingPhotoId, setAnalyzingPhotoId] = useState<string | null>(null);
+  const [photoAnalysis, setPhotoAnalysis] = useState<Record<string, string>>({});
 
   useEffect(() => {
     fetchProjects();
   }, []);
+
+  const analyzePhoto = async (attachment: Attachment) => {
+    if (!attachment.file_path.match(/\.(jpg|jpeg|png|webp)$/i)) return;
+    
+    setAnalyzingPhotoId(attachment.id);
+    try {
+      const fileRes = await fetch(attachment.file_path);
+      const blob = await fileRes.blob();
+      const file = new File([blob], attachment.file_name, { type: attachment.file_type });
+      
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const res = await fetch('/api/ai/analyze-photo', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (data.success) {
+        setPhotoAnalysis(prev => ({ ...prev, [attachment.id]: data.analysis }));
+      }
+    } catch (err) {
+      console.error("Analysis error:", err);
+    } finally {
+      setAnalyzingPhotoId(null);
+    }
+  };
 
   useEffect(() => {
     if (initialProjectId) {
@@ -101,7 +132,7 @@ export default function ConstructionDiary({ initialProjectId }: { initialProject
     }
   };
 
-  const fetchDiaries = async (projectId: number) => {
+  const fetchDiaries = async (projectId: string) => {
     setLoading(true);
     try {
       const res = await fetch(`/api/projects/${projectId}/diaries`);
@@ -168,9 +199,10 @@ export default function ConstructionDiary({ initialProjectId }: { initialProject
     setPresenceList(presenceList.filter((_, i) => i !== index));
   };
 
-  const fetchAttachments = async (diaryId: number) => {
+  const fetchAttachments = async (diaryId: string) => {
+    if (!selectedProject) return;
     try {
-      const res = await fetch(`/api/diaries/${diaryId}/attachments`);
+      const res = await fetch(`/api/projects/${selectedProject}/diaries/${diaryId}/attachments`);
       const data = await res.json();
       setAttachments(data);
     } catch (err) {
@@ -179,7 +211,7 @@ export default function ConstructionDiary({ initialProjectId }: { initialProject
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!selectedDiaryForAttachments || !e.target.files?.[0]) return;
+    if (!selectedDiaryForAttachments || !e.target.files?.[0] || !selectedProject) return;
     
     const file = e.target.files[0];
     const formData = new FormData();
@@ -187,7 +219,7 @@ export default function ConstructionDiary({ initialProjectId }: { initialProject
 
     setUploading(true);
     try {
-      const res = await fetch(`/api/diaries/${selectedDiaryForAttachments.id}/attachments`, {
+      const res = await fetch(`/api/projects/${selectedProject}/diaries/${selectedDiaryForAttachments.id}/attachments`, {
         method: 'POST',
         body: formData
       });
@@ -201,11 +233,11 @@ export default function ConstructionDiary({ initialProjectId }: { initialProject
     }
   };
 
-  const handleDeleteAttachment = async (id: number) => {
-    if (!confirm('Anhang wirklich löschen?')) return;
+  const handleDeleteAttachment = async (attachmentId: string) => {
+    if (!confirm('Anhang wirklich löschen?') || !selectedProject || !selectedDiaryForAttachments) return;
     try {
-      const res = await fetch(`/api/attachments/${id}`, { method: 'DELETE' });
-      if (res.ok && selectedDiaryForAttachments) {
+      const res = await fetch(`/api/projects/${selectedProject}/diaries/${selectedDiaryForAttachments.id}/attachments/${attachmentId}`, { method: 'DELETE' });
+      if (res.ok) {
         fetchAttachments(selectedDiaryForAttachments.id);
       }
     } catch (err) {
@@ -221,7 +253,7 @@ export default function ConstructionDiary({ initialProjectId }: { initialProject
           <select 
             id="diary-project-select"
             value={selectedProject || ''} 
-            onChange={(e) => setSelectedProject(Number(e.target.value))}
+            onChange={(e) => setSelectedProject(e.target.value)}
             className="w-full bg-slate-50 border border-transparent focus:border-brand-primary/30 rounded-2xl py-4 px-6 outline-none transition-all font-bold text-brand-dark"
           >
             <option value="">-- Projekt wählen --</option>
@@ -361,7 +393,7 @@ export default function ConstructionDiary({ initialProjectId }: { initialProject
                       <select 
                         required
                         value={newDiary.project_id || ''}
-                        onChange={e => setNewDiary({ ...newDiary, project_id: Number(e.target.value) })}
+                        onChange={e => setNewDiary({ ...newDiary, project_id: e.target.value })}
                         className="w-full bg-slate-50 border border-transparent focus:border-brand-primary/30 rounded-2xl py-4 px-6 outline-none transition-all font-bold text-brand-dark"
                       >
                         <option value="">-- Projekt wählen --</option>
@@ -544,36 +576,71 @@ export default function ConstructionDiary({ initialProjectId }: { initialProject
                     </div>
                   ) : (
                     attachments.map(att => (
-                      <div key={att.id} className="bg-slate-50 p-4 rounded-2xl flex justify-between items-center group">
-                        <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-brand-primary shadow-sm">
-                            {att.file_type.startsWith('image/') ? <ImageIcon size={20} /> : <File size={20} />}
+                      <div key={att.id} className="bg-slate-50 p-4 rounded-3xl border border-slate-100 space-y-4 group">
+                        <div className="flex justify-between items-center">
+                          <div className="flex items-center gap-4">
+                            <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-brand-primary shadow-sm">
+                              {att.file_type.startsWith('image/') ? <ImageIcon size={20} /> : <FileIcon size={20} />}
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold text-brand-dark truncate max-w-[200px]">{att.file_name}</p>
+                              <p className="text-[10px] text-slate-400 font-medium uppercase tracking-widest">
+                                {new Date(att.created_at).toLocaleDateString('de-DE')}
+                              </p>
+                            </div>
                           </div>
-                          <div>
-                            <p className="text-sm font-bold text-brand-dark truncate max-w-[200px]">{att.file_name}</p>
-                            <p className="text-[10px] text-slate-400 font-medium uppercase tracking-widest">
-                              {new Date(att.created_at).toLocaleDateString('de-DE')}
+                          <div className="flex items-center gap-2">
+                            {att.file_type.startsWith('image/') && (
+                              <button 
+                                onClick={() => analyzePhoto(att)}
+                                disabled={analyzingPhotoId === att.id}
+                                className="p-2 text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest"
+                                title="KI-Analyse"
+                              >
+                                {analyzingPhotoId === att.id ? <Loader2 size={16} className="animate-spin" /> : <Maximize2 size={16} />}
+                                KI-Check
+                              </button>
+                            )}
+                            <a 
+                              href={att.file_path} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="p-2 text-slate-400 hover:text-brand-primary transition-colors"
+                              title="Ansehen / Download"
+                            >
+                              <Download size={18} />
+                            </a>
+                            <button 
+                              onClick={() => handleDeleteAttachment(att.id)}
+                              className="p-2 text-slate-400 hover:text-red-500 transition-colors"
+                              title="Löschen"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
+                        </div>
+
+                        {att.file_type.startsWith('image/') && (
+                          <div className="relative aspect-video rounded-2xl overflow-hidden border border-slate-200 bg-slate-200">
+                            <img src={att.file_path} alt={att.file_name} className="w-full h-full object-cover" />
+                          </div>
+                        )}
+
+                        {photoAnalysis[att.id] && (
+                          <motion.div 
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            className="p-4 bg-brand-primary/5 rounded-2xl border border-brand-primary/10"
+                          >
+                            <div className="flex items-center gap-2 text-brand-primary mb-2">
+                              <Maximize2 size={14} />
+                              <span className="text-[10px] font-black uppercase tracking-widest">KI-Analyse Ergebnis</span>
+                            </div>
+                            <p className="text-xs text-slate-600 leading-relaxed italic">
+                              "{photoAnalysis[att.id]}"
                             </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <a 
-                            href={att.file_path} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="p-2 text-slate-400 hover:text-brand-primary transition-colors"
-                            title="Ansehen / Download"
-                          >
-                            <Download size={18} />
-                          </a>
-                          <button 
-                            onClick={() => handleDeleteAttachment(att.id)}
-                            className="p-2 text-slate-400 hover:text-red-500 transition-colors"
-                            title="Löschen"
-                          >
-                            <Trash2 size={18} />
-                          </button>
-                        </div>
+                          </motion.div>
+                        )}
                       </div>
                     ))
                   )}

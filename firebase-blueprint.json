@@ -120,6 +120,11 @@
         "customer_address": { "type": "string" },
         "craftsman_name": { "type": "string" },
         "craftsman_contact": { "type": "string" },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Project tags for categorization"
+        },
         "status": { "type": "string", "enum": ["Entwurf", "Angebot", "Auftrag", "In Arbeit", "Abgeschlossen", "Storniert"] },
         "currency": { "type": "string" },
         "tax_rate": { "type": "number" },

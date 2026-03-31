@@ -8,6 +8,7 @@ import {
   Wind, 
   Paintbrush, 
   CheckCircle2, 
+  FileText,
   Phone, 
   Mail, 
   MapPin,
@@ -39,17 +40,19 @@ import { motion, AnimatePresence, useScroll, useTransform } from 'motion/react';
 import { Accordion } from './components/Accordion';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import MyProjects from './components/MyProjects';
 import LiveCalculator from './components/LiveCalculator';
 import ServiceCatalog from './components/ServiceCatalog';
 import QuoteBuilder from './components/QuoteBuilder';
+import Pricing from './components/Pricing';
 
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
 import { doc, getDoc, collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 
 // --- Types ---
-interface CalcPosition {
-  id: number;
+export interface CalcPosition {
+  id: string;
   name: string;
   unit: string;
   labor_hours: number;
@@ -57,20 +60,30 @@ interface CalcPosition {
   quantity: number;
 }
 
-interface Trade {
-  id: number;
-  name: string;
-  description: string;
+export interface TradeAttributeDefinition {
+  id: string;
+  label: string;
+  type: 'select' | 'number' | 'boolean' | 'text';
+  options?: string[];
+  unit?: string;
 }
 
-interface LaborRate {
-  id: number;
+export interface Trade {
+  id: string;
+  name: string;
+  description: string;
+  is_anlage_a?: number;
+  attribute_definitions?: TradeAttributeDefinition[];
+}
+
+export interface LaborRate {
+  id: string;
   worker_type: 'Meister' | 'Geselle' | 'Helfer';
   hourly_rate: number;
 }
 
-type ContentMap = { [key: string]: string };
-type MediaItem = {
+export type ContentMap = { [key: string]: string };
+export type MediaItem = {
   id: string;
   type: 'image' | 'video';
   url: string;
@@ -79,6 +92,117 @@ type MediaItem = {
   description: string;
   sort_order: number;
 };
+
+// --- Auth Context ---
+interface AuthContextType {
+  user: any;
+  isAdmin: boolean;
+  permissions: any;
+  loading: boolean;
+  handleLogin: () => Promise<void>;
+  handleLogout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
+}
+
+const AuthContext = React.createContext<AuthContextType | null>(null);
+
+export const useAuth = () => {
+  const context = React.useContext(AuthContext);
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
+  return context;
+};
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<any>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [permissions, setPermissions] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchUser = async (firebaseUser: any) => {
+    try {
+      const res = await fetch(`/api/user/profile?userId=${firebaseUser.uid}`);
+      const data = await res.json();
+      if (data.success) {
+        setUser({ ...firebaseUser, ...data.user });
+        
+        const adminEmail = "altankg@gmail.com";
+        let isUserAdmin = firebaseUser.email === adminEmail && firebaseUser.emailVerified;
+        
+        // Fetch role permissions if user has a role
+        if (data.user.role) {
+          const rolesRes = await fetch('/api/roles');
+          const rolesData = await rolesRes.json();
+          if (rolesData.success) {
+            const userRole = rolesData.roles.find((r: any) => r.id === data.user.role);
+            if (userRole) {
+              setPermissions(userRole.permissions);
+              // If user has any edit permission or is explicitly admin, allow admin access
+              if (userRole.name.toLowerCase() === 'admin' || 
+                  Object.values(userRole.permissions).some((p: any) => p.edit || p.delete)) {
+                isUserAdmin = true;
+              }
+            }
+          }
+        }
+
+        if (!isUserAdmin && data.user.role === 'admin') {
+          isUserAdmin = true;
+        }
+        setIsAdmin(isUserAdmin);
+      } else {
+        setUser(firebaseUser);
+      }
+    } catch (err) {
+      console.error('Error fetching user profile:', err);
+      setUser(firebaseUser);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const refreshUser = async () => {
+    if (auth.currentUser) {
+      await fetchUser(auth.currentUser);
+    }
+  };
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        await fetchUser(firebaseUser);
+      } else {
+        setUser(null);
+        setIsAdmin(false);
+        setLoading(false);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const handleLogin = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (err) {
+      console.error('Login Fehler:', err);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (err) {
+      console.error('Logout Fehler:', err);
+    }
+  };
+
+  return (
+    <AuthContext.Provider value={{ user, isAdmin, permissions, loading, handleLogin, handleLogout, refreshUser }}>
+      {children}
+    </AuthContext.Provider>
+  );
+}
 
 export default function App() {
   const [customCss, setCustomCss] = useState('');
@@ -116,20 +240,23 @@ export default function App() {
   }, []);
 
   return (
-    <Router>
-      {customCss && <style dangerouslySetInnerHTML={{ __html: customCss }} />}
-      <Routes>
-        <Route path="/admin" element={<Admin activeTabDefault="quotes" />} />
-        <Route path="/admin/quotes" element={<Admin activeTabDefault="quotes" />} />
-        <Route path="/admin/rates" element={<Admin activeTabDefault="rates" />} />
-        <Route path="/impressum" element={<LegalPage title="Impressum" content={<ImpressumContent />} />} />
-        <Route path="/datenschutz" element={<LegalPage title="Datenschutz" content={<DatenschutzContent />} />} />
-        <Route path="/agb" element={<LegalPage title="AGB" content={<AGBContent />} />} />
-        <Route path="/forgot-password" element={<ForgotPassword />} />
-        <Route path="/reset-password" element={<ResetPassword />} />
-        <Route path="/" element={<MainSite />} />
-      </Routes>
-    </Router>
+    <AuthProvider>
+      <Router>
+        {customCss && <style dangerouslySetInnerHTML={{ __html: customCss }} />}
+        <Routes>
+          <Route path="/admin" element={<Admin activeTabDefault="quotes" />} />
+          <Route path="/pricing" element={<Pricing />} />
+          <Route path="/admin/quotes" element={<Admin activeTabDefault="quotes" />} />
+          <Route path="/admin/rates" element={<Admin activeTabDefault="rates" />} />
+          <Route path="/impressum" element={<LegalPage title="Impressum" content={<ImpressumContent />} />} />
+          <Route path="/datenschutz" element={<LegalPage title="Datenschutz" content={<DatenschutzContent />} />} />
+          <Route path="/agb" element={<LegalPage title="AGB" content={<AGBContent />} />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/" element={<MainSite />} />
+        </Routes>
+      </Router>
+    </AuthProvider>
   );
 }
 
@@ -318,8 +445,7 @@ function ResetPassword() {
 
 function MainSite() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [user, setUser] = useState<any>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const { user, isAdmin, handleLogin: authLogin, handleLogout: authLogout, refreshUser } = useAuth();
   const [content, setContent] = useState<ContentMap>({});
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [contactForm, setContactForm] = useState({ firstName: '', lastName: '', email: '', message: '' });
@@ -331,61 +457,39 @@ function MainSite() {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [profileForm, setProfileForm] = useState({ firstName: '', lastName: '', phone: '', address: '', email: '' });
+  const [calculatorUsed, setCalculatorUsed] = useState(() => localStorage.getItem('calculator_used') === 'true');
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        // Authenticate with our backend
+    if (user) {
+      localStorage.setItem('calculator_used', 'true');
+      setCalculatorUsed(true);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (user && !user.first_name && !user.last_name) {
+      // Check if profile is complete
+      const checkProfile = async () => {
         try {
-          const res = await fetch('/api/auth/google-login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              googleId: firebaseUser.uid, 
-              email: firebaseUser.email, 
-              name: firebaseUser.displayName 
-            })
-          });
+          const res = await fetch(`/api/user/profile?userId=${user.uid}`);
           const data = await res.json();
-          if (data.success) {
-            setUser({ ...firebaseUser, ...data.user });
-            if (!data.isProfileComplete) {
-              setProfileForm({
-                firstName: data.user.first_name || firebaseUser.displayName?.split(' ')[0] || '',
-                lastName: data.user.last_name || firebaseUser.displayName?.split(' ')[1] || '',
-                phone: data.user.phone || '',
-                address: data.user.address || '',
-                email: data.user.email || firebaseUser.email || ''
-              });
-              setIsProfileModalOpen(true);
-            }
+          if (data.success && !data.user.first_name) {
+            setProfileForm({
+              firstName: data.user.first_name || user.displayName?.split(' ')[0] || '',
+              lastName: data.user.last_name || user.displayName?.split(' ')[1] || '',
+              phone: data.user.phone || '',
+              address: data.user.address || '',
+              email: data.user.email || user.email || ''
+            });
+            setIsProfileModalOpen(true);
           }
         } catch (err) {
-          console.error('Backend auth error:', err);
-          setUser(firebaseUser);
+          console.error('Error checking profile completion:', err);
         }
-
-        const adminEmail = "altankg@gmail.com";
-        let isUserAdmin = firebaseUser.email === adminEmail && firebaseUser.emailVerified;
-        
-        if (!isUserAdmin) {
-          try {
-            const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-            if (userDoc.exists() && userDoc.data().role === 'admin') {
-              isUserAdmin = true;
-            }
-          } catch (err) {
-            console.error('Error checking admin role:', err);
-          }
-        }
-        setIsAdmin(isUserAdmin);
-      } else {
-        setUser(null);
-        setIsAdmin(false);
-      }
-    });
-    return () => unsubscribe();
-  }, []);
+      };
+      checkProfile();
+    }
+  }, [user]);
 
   const handleProfileSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -404,11 +508,7 @@ function MainSite() {
       if (data.success) {
         setIsProfileModalOpen(false);
         // Refresh user data
-        const profileRes = await fetch(`/api/user/profile?userId=${user.uid}`);
-        const profileData = await profileRes.json();
-        if (profileData.success) {
-          setUser({ ...user, ...profileData.user });
-        }
+        await refreshUser();
       }
     } catch (err) {
       console.error('Profile update error:', err);
@@ -420,9 +520,8 @@ function MainSite() {
   };
 
   const handleGoogleLogin = async () => {
-    const provider = new GoogleAuthProvider();
     try {
-      await signInWithPopup(auth, provider);
+      await authLogin();
       setIsLoginModalOpen(false);
     } catch (err) {
       console.error('Login Fehler:', err);
@@ -430,11 +529,7 @@ function MainSite() {
   };
 
   const handleLogout = async () => {
-    try {
-      await signOut(auth);
-    } catch (err) {
-      console.error('Logout Fehler:', err);
-    }
+    await authLogout();
   };
 
   useEffect(() => {
@@ -708,6 +803,7 @@ function MainSite() {
               <a href="#leistungskatalog" className="hover:text-brand-primary transition-colors">Katalog</a>
               <a href="#projekte" className="hover:text-brand-primary transition-colors">Projekte</a>
               <a href="#karriere" className="hover:text-brand-primary transition-colors">Karriere</a>
+              <Link to="/pricing" className="hover:text-brand-primary transition-colors">Preise</Link>
               <a href="#kalkulator" className="px-6 py-3 bg-brand-primary text-white rounded-full hover:bg-brand-secondary transition-all shadow-lg shadow-brand-primary/20">Live-Kalkulator</a>
               <a href="#kontakt" className="hover:text-brand-primary transition-colors">Kontakt</a>
             </div>
@@ -716,6 +812,15 @@ function MainSite() {
             <div className="flex items-center gap-4">
               {user ? (
                 <div className="flex items-center gap-2 md:gap-4">
+                  {user && (
+                    <a 
+                      href="#meine-projekte" 
+                      className="text-xs md:text-sm font-bold px-3 py-1.5 md:px-4 md:py-2 bg-brand-accent text-brand-primary rounded-lg hover:bg-brand-primary hover:text-white transition-all flex items-center gap-2"
+                    >
+                      <FileText size={14} className="hidden md:block" />
+                      Meine Projekte
+                    </a>
+                  )}
                   {isAdmin && (
                     <Link 
                       to="/admin" 
@@ -765,8 +870,10 @@ function MainSite() {
             <a href="#leistungen" onClick={() => setIsMenuOpen(false)}>Leistungen</a>
             <a href="#leistungskatalog" onClick={() => setIsMenuOpen(false)}>Katalog</a>
             <a href="#kalkulator" onClick={() => setIsMenuOpen(false)}>Live-Kalkulator</a>
+            {user && <a href="#meine-projekte" onClick={() => setIsMenuOpen(false)}>Meine Projekte</a>}
             <a href="#projekte" onClick={() => setIsMenuOpen(false)}>Projekte</a>
             <a href="#karriere" onClick={() => setIsMenuOpen(false)}>Karriere</a>
+            <Link to="/pricing" onClick={() => setIsMenuOpen(false)}>Preise</Link>
             <a href="#kontakt" onClick={() => setIsMenuOpen(false)}>Kontakt</a>
             <div className="mt-8 pt-8 border-t border-slate-100">
               {user ? (
@@ -1019,6 +1126,24 @@ function MainSite() {
         </div>
       </section>
 
+      {/* My Projects Section - Only for logged in users */}
+      {user && (
+        <section id="meine-projekte" className="py-20 bg-slate-50">
+          <div className="max-w-7xl mx-auto px-6">
+            <div className="text-center mb-16">
+              <h2 className="text-sm font-bold text-brand-secondary uppercase tracking-[0.3em] mb-4">Ihre Übersicht</h2>
+              <h3 className="text-4xl md:text-5xl font-black text-brand-dark tracking-tighter mb-6">
+                Meine Projekte & Kalkulationen.
+              </h3>
+              <p className="text-slate-500 max-w-2xl mx-auto font-medium">
+                Hier finden Sie alle Ihre gespeicherten Projekte, Angebote und den aktuellen Status Ihrer Bauvorhaben.
+              </p>
+            </div>
+            <MyProjects />
+          </div>
+        </section>
+      )}
+
       {/* Service Catalog Section */}
       <section id="leistungskatalog" className="py-20 bg-white">
         <div className="max-w-5xl mx-auto px-6">
@@ -1045,7 +1170,28 @@ function MainSite() {
                   <h2 className="text-4xl font-black text-brand-dark tracking-tighter mb-4">Live-Kalkulator</h2>
                   <p className="text-slate-500 font-medium">Wählen Sie Ihre Leistungen und erhalten Sie sofort eine Schätzung.</p>
                 </div>
-                <LiveCalculator />
+                {!user && calculatorUsed ? (
+                  <div className="bg-slate-50 rounded-[2rem] p-12 text-center border-2 border-dashed border-slate-200">
+                    <div className="w-20 h-20 bg-brand-primary/10 text-brand-primary rounded-3xl flex items-center justify-center mx-auto mb-8">
+                      <Key size={40} />
+                    </div>
+                    <h3 className="text-3xl font-black text-brand-dark tracking-tighter mb-4">Anmeldung erforderlich</h3>
+                    <p className="text-slate-500 font-medium mb-8 max-w-md mx-auto">
+                      Sie haben bereits eine Kalkulation erstellt. Um den Kalkulator weiterhin nutzen zu können, melden Sie sich bitte an.
+                    </p>
+                    <button 
+                      onClick={() => setIsLoginModalOpen(true)}
+                      className="bg-brand-primary text-white px-10 py-4 rounded-2xl font-bold hover:bg-brand-secondary transition-all shadow-xl shadow-brand-primary/20 uppercase tracking-widest"
+                    >
+                      Jetzt anmelden
+                    </button>
+                  </div>
+                ) : (
+                  <LiveCalculator 
+                    isLoggedIn={!!user} 
+                    onDownloadAttempt={() => setIsLoginModalOpen(true)} 
+                  />
+                )}
               </div>
               <div className="lg:col-span-4 bg-brand-dark p-8 md:p-12 text-white flex flex-col justify-between relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-brand-primary/10 rounded-full blur-3xl -mr-32 -mt-32" />

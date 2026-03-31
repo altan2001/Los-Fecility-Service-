@@ -31,20 +31,28 @@ import {
 } from 'recharts';
 
 interface Project {
-  id: number;
+  id: string;
   name: string;
   customer_name: string;
   status: string;
   created_at: string;
   updated_at: string;
   total_amount?: number;
+  tags?: string[];
 }
 
-export default function ProjectVisualOverview({ onEditProject, onViewDiary }: { onEditProject: (id: number) => void, onViewDiary: (id: number) => void }) {
+interface ProjectVisualOverviewProps {
+  onEditProject: (id: string) => void;
+  onViewDiary: (id: string) => void;
+  onViewChangeOrders: (id: string) => void;
+}
+
+export default function ProjectVisualOverview({ onEditProject, onViewDiary, onViewChangeOrders }: ProjectVisualOverviewProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [selectedTag, setSelectedTag] = useState('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
   useEffect(() => {
@@ -79,9 +87,11 @@ export default function ProjectVisualOverview({ onEditProject, onViewDiary }: { 
 
   const filteredProjects = projects.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         p.customer_name.toLowerCase().includes(searchTerm.toLowerCase());
+                         p.customer_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         (p.tags && p.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase())));
     const matchesStatus = statusFilter === 'all' || p.status === statusFilter;
-    return matchesSearch && matchesStatus;
+    const matchesTag = selectedTag === 'all' || (p.tags && p.tags.includes(selectedTag));
+    return matchesSearch && matchesStatus && matchesTag;
   });
 
   const statusCounts = projects.reduce((acc: any, p) => {
@@ -92,6 +102,7 @@ export default function ProjectVisualOverview({ onEditProject, onViewDiary }: { 
   const pieData = Object.entries(statusCounts).map(([name, value]) => ({ name, value: value as number }));
   
   const COLORS = ['#F27D26', '#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#64748b'];
+  const allTags = Array.from(new Set(projects.flatMap(p => p.tags || [])));
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -190,6 +201,16 @@ export default function ProjectVisualOverview({ onEditProject, onViewDiary }: { 
         </div>
         <div className="flex gap-3 w-full md:w-auto">
           <select 
+            value={selectedTag}
+            onChange={(e) => setSelectedTag(e.target.value)}
+            className="px-4 py-3 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all font-bold text-xs uppercase tracking-widest text-slate-600 cursor-pointer"
+          >
+            <option value="all">Alle Tags</option>
+            {allTags.map(tag => (
+              <option key={tag} value={tag}>{tag}</option>
+            ))}
+          </select>
+          <select 
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
             className="px-4 py-3 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all font-bold text-xs uppercase tracking-widest text-slate-600 cursor-pointer"
@@ -248,8 +269,16 @@ export default function ProjectVisualOverview({ onEditProject, onViewDiary }: { 
                       <button 
                         onClick={() => onViewDiary(project.id)}
                         className="p-2 bg-slate-50 text-slate-400 hover:bg-brand-primary hover:text-white rounded-xl transition-all"
+                        title="Bautagebuch"
                       >
                         <Clock size={16} />
+                      </button>
+                      <button 
+                        onClick={() => onViewChangeOrders(project.id)}
+                        className="p-2 bg-slate-50 text-slate-400 hover:bg-brand-primary hover:text-white rounded-xl transition-all"
+                        title="Nachträge"
+                      >
+                        <FileText size={16} />
                       </button>
                     </div>
                   </div>
@@ -257,6 +286,16 @@ export default function ProjectVisualOverview({ onEditProject, onViewDiary }: { 
                   <h4 className="text-xl font-black text-brand-dark mb-2 group-hover:text-brand-primary transition-colors line-clamp-1">
                     {project.name}
                   </h4>
+
+                  {project.tags && project.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mb-4">
+                      {project.tags.map((tag, i) => (
+                        <span key={i} className="text-[8px] font-black uppercase tracking-tighter px-1.5 py-0.5 bg-brand-primary/10 text-brand-primary rounded">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   
                   <div className="flex items-center gap-2 text-slate-500 mb-6">
                     <User size={14} />
@@ -304,6 +343,7 @@ export default function ProjectVisualOverview({ onEditProject, onViewDiary }: { 
                   <th className="px-8 py-5 text-xs font-bold text-slate-400 uppercase tracking-widest">Status</th>
                   <th className="px-8 py-5 text-xs font-bold text-slate-400 uppercase tracking-widest">Letzte Änderung</th>
                   <th className="px-8 py-5 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">Volumen</th>
+                  <th className="px-8 py-5 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">Aktion</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -318,7 +358,18 @@ export default function ProjectVisualOverview({ onEditProject, onViewDiary }: { 
                         <div className="w-10 h-10 bg-brand-accent rounded-xl flex items-center justify-center text-brand-primary">
                           <FileText size={20} />
                         </div>
-                        <span className="font-bold text-brand-dark group-hover:text-brand-primary transition-colors">{project.name}</span>
+                        <div className="flex flex-col">
+                          <span className="font-bold text-brand-dark group-hover:text-brand-primary transition-colors">{project.name}</span>
+                          {project.tags && project.tags.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {project.tags.map((tag, i) => (
+                                <span key={i} className="text-[8px] font-black uppercase tracking-tighter px-1.5 py-0.5 bg-brand-primary/10 text-brand-primary rounded">
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td className="px-8 py-5 text-sm text-slate-600 font-medium">{project.customer_name}</td>
@@ -338,6 +389,31 @@ export default function ProjectVisualOverview({ onEditProject, onViewDiary }: { 
                     </td>
                     <td className="px-8 py-5 text-right font-black text-brand-dark">
                       {new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(project.total_amount || 0)}
+                    </td>
+                    <td className="px-8 py-5 text-right" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex justify-end gap-2">
+                        <button 
+                          onClick={() => onViewDiary(project.id)}
+                          className="p-2 bg-slate-50 text-slate-400 hover:bg-brand-primary hover:text-white rounded-xl transition-all"
+                          title="Bautagebuch"
+                        >
+                          <Clock size={16} />
+                        </button>
+                        <button 
+                          onClick={() => onViewChangeOrders(project.id)}
+                          className="p-2 bg-slate-50 text-slate-400 hover:bg-brand-primary hover:text-white rounded-xl transition-all"
+                          title="Nachträge"
+                        >
+                          <FileText size={16} />
+                        </button>
+                        <button 
+                          onClick={() => onEditProject(project.id)}
+                          className="p-2 bg-slate-50 text-slate-400 hover:bg-brand-primary hover:text-white rounded-xl transition-all"
+                          title="Bearbeiten"
+                        >
+                          <Edit3 size={16} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

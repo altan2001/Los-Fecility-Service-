@@ -15,14 +15,14 @@ import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 
 interface Project {
-  id: number;
+  id: string;
   name: string;
   client_name: string;
 }
 
 interface ChangeOrder {
-  id: number;
-  project_id: number;
+  id: string;
+  project_id: string;
   title: string;
   description: string;
   amount: number;
@@ -30,9 +30,13 @@ interface ChangeOrder {
   created_at: string;
 }
 
-export default function ChangeOrderManager() {
+interface ChangeOrderManagerProps {
+  initialProjectId?: string | null;
+}
+
+export default function ChangeOrderManager({ initialProjectId }: ChangeOrderManagerProps) {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [selectedProject, setSelectedProject] = useState<number | null>(null);
+  const [selectedProject, setSelectedProject] = useState<string | null>(initialProjectId || null);
   const [changeOrders, setChangeOrders] = useState<ChangeOrder[]>([]);
   const [showNewOrderForm, setShowNewOrderForm] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -46,6 +50,12 @@ export default function ChangeOrderManager() {
   useEffect(() => {
     fetchProjects();
   }, []);
+
+  useEffect(() => {
+    if (initialProjectId) {
+      setSelectedProject(initialProjectId);
+    }
+  }, [initialProjectId]);
 
   useEffect(() => {
     if (selectedProject) {
@@ -63,7 +73,7 @@ export default function ChangeOrderManager() {
     }
   };
 
-  const fetchChangeOrders = async (projectId: number) => {
+  const fetchChangeOrders = async (projectId: string) => {
     setLoading(true);
     try {
       const res = await fetch(`/api/projects/${projectId}/change-orders`);
@@ -103,15 +113,16 @@ export default function ChangeOrderManager() {
     }
   };
 
-  const handleUpdateStatus = async (orderId: number, newStatus: 'approved' | 'rejected') => {
+  const handleUpdateStatus = async (orderId: string, newStatus: 'approved' | 'rejected') => {
+    if (!selectedProject) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/change-orders/${orderId}/status`, {
+      const res = await fetch(`/api/projects/${selectedProject}/change-orders/${orderId}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus })
       });
-      if (res.ok && selectedProject) {
+      if (res.ok) {
         fetchChangeOrders(selectedProject);
       }
     } catch (err) {
@@ -182,13 +193,13 @@ export default function ChangeOrderManager() {
   };
 
   return (
-    <div id="change-order-manager-container" className="space-y-8">
+    <div id="change-order-section" className="space-y-8">
       <div id="change-order-project-selector" className="bg-white p-8 rounded-[2rem] shadow-sm border border-slate-100">
         <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Projekt auswählen</label>
         <select 
           id="change-order-project-select"
           value={selectedProject || ''} 
-          onChange={(e) => setSelectedProject(Number(e.target.value))}
+          onChange={(e) => setSelectedProject(e.target.value)}
           className="w-full bg-slate-50 border border-transparent focus:border-brand-primary/30 rounded-2xl py-4 px-6 outline-none transition-all font-bold text-brand-dark"
         >
           <option value="">-- Projekt wählen --</option>

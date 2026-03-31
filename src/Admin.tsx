@@ -26,7 +26,8 @@ import {
   Pencil,
   Globe,
   Search,
-  Euro
+  Euro,
+  Database
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Tabs } from './components/Tabs';
@@ -45,14 +46,17 @@ import ProjectOverview from './components/ProjectOverview';
 import ProjectVisualOverview from './components/ProjectVisualOverview';
 import SketchPad from './components/SketchPad';
 import ServiceCatalog from './components/ServiceCatalog';
+import DatanormImport from './components/DatanormImport';
 
+import { useAuth, TradeAttributeDefinition } from './App';
 import { auth, db } from './firebase';
-import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 
-type ContentMap = { [key: string]: string };
-type MediaItem = {
-  id: number;
+import { PILOT_TRADE_ATTRIBUTES } from './constants/tradeAttributes';
+
+export type ContentMap = { [key: string]: string };
+export type MediaItem = {
+  id: string;
   type: 'image' | 'video';
   url: string;
   category: string;
@@ -61,22 +65,22 @@ type MediaItem = {
   sort_order: number;
 };
 
-export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashboard' | 'content' | 'media' | 'settings' | 'calc' | 'quotes' | 'rates' | 'diaries' | 'change-orders' | 'invoices' | 'resources' | 'reports' | 'projects' }) {
-  const [user, setUser] = useState<any>(null);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [isCheckingAdmin, setIsCheckingAdmin] = useState(true);
+export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashboard' | 'projects_visual' | 'customers' | 'content' | 'media' | 'settings' | 'calc' | 'quotes' | 'rates' | 'diaries' | 'change-orders' | 'invoices' | 'resources' | 'reports' | 'projects' | 'sketches' | 'catalog' | 'users' }) {
+  const { user, isAdmin, permissions, loading: authLoading, handleLogin, handleLogout } = useAuth();
+  const [userProfile, setUserProfile] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'projects_visual' | 'customers' | 'content' | 'media' | 'settings' | 'calc' | 'quotes' | 'rates' | 'diaries' | 'change-orders' | 'invoices' | 'resources' | 'reports' | 'projects' | 'sketches' | 'catalog'>(activeTabDefault || 'dashboard');
+  const [ratesSearchTerm, setRatesSearchTerm] = useState('');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'projects_visual' | 'customers' | 'content' | 'media' | 'settings' | 'calc' | 'quotes' | 'rates' | 'diaries' | 'change-orders' | 'invoices' | 'resources' | 'reports' | 'projects' | 'sketches' | 'catalog' | 'users'>(activeTabDefault || 'dashboard');
   
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+  const [catalog, setCatalog] = useState<any[]>([]);
   const [trades, setTrades] = useState<any[]>([]);
-  const [selectedTrade, setSelectedTrade] = useState<number | null>(null);
+  const [selectedTrade, setSelectedTrade] = useState<string | null>(null);
   const [laborRates, setLaborRates] = useState<any[]>([]);
   const [serviceItems, setServiceItems] = useState<any[]>([]);
   const [allLaborRates, setAllLaborRates] = useState<any[]>([]);
-  const [newTrade, setNewTrade] = useState({ name: '', description: '', is_anlage_a: 0 });
+  const [newTrade, setNewTrade] = useState({ name: '', description: '', is_anlage_a: 0, attribute_definitions: [] as any[] });
   const [editingTrade, setEditingTrade] = useState<any>(null);
   const [showNewTradeForm, setShowNewTradeForm] = useState(false);
   const [newServiceItem, setNewServiceItem] = useState({
@@ -88,66 +92,71 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
     sort_order: 0
   });
   const [showNewServiceForm, setShowNewServiceForm] = useState(false);
+  const [showDatanormImport, setShowDatanormImport] = useState(false);
   const [editingServiceItem, setEditingServiceItem] = useState<any>(null);
   const [showServiceLibrary, setShowServiceLibrary] = useState(false);
   const [content, setContent] = useState<ContentMap>({});
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [roles, setRoles] = useState<any[]>([]);
+  const [usersList, setUsersList] = useState<any[]>([]);
   const [showRolesManager, setShowRolesManager] = useState(false);
   const [calcSubTab, setCalcSubTab] = useState<'trades' | 'rates'>('trades');
+  const [catalogSubTab, setCatalogSubTab] = useState<'services' | 'trades'>('services');
+
+  const hasPermission = (module: string, action: 'view' | 'edit' | 'delete' = 'view') => {
+    if (!permissions) return true; // Default for super admin
+    const modulePerms = permissions[module.toLowerCase()];
+    if (!modulePerms) return false;
+    return modulePerms[action];
+  };
   const [userRole, setUserRole] = useState('user');
-  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [sketches, setSketches] = useState<{ id: string; title: string; data: string; date: string }[]>([]);
   const [currentSketch, setCurrentSketch] = useState<string | null>(null);
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setIsCheckingAdmin(true);
-      if (user) {
-        setUser(user);
-        setIsLoggedIn(true);
-        
-        // Check if user is admin via email
-        const adminEmail = "altankg@gmail.com";
-        let isUserAdmin = user.email === adminEmail && user.emailVerified;
-        
-        // Also check if user is admin via Firestore role
-        if (!isUserAdmin) {
-          try {
-            const userDoc = await getDoc(doc(db, 'users', user.uid));
-            if (userDoc.exists() && userDoc.data().role === 'admin') {
-              isUserAdmin = true;
-            }
-          } catch (err) {
-            console.error('Error checking admin role:', err);
-          }
-        }
-        
-        setIsAdmin(isUserAdmin);
-      } else {
-        setUser(null);
-        setIsLoggedIn(false);
-        setIsAdmin(false);
-      }
-      setIsCheckingAdmin(false);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  const handleLogin = async () => {
-    const provider = new GoogleAuthProvider();
+  const handleUpgrade = async () => {
+    if (!user) return;
+    setLoading(true);
     try {
-      await signInWithPopup(auth, provider);
+      const response = await fetch('/api/create-checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.uid, planId: 'pro' })
+      });
+      const data = await response.json();
+      if (data.success && data.url) {
+        window.location.href = data.url;
+      } else {
+        setMessage({ type: 'error', text: data.message || 'Fehler beim Starten des Upgrades.' });
+      }
     } catch (err) {
-      console.error('Login Fehler:', err);
+      console.error('Upgrade Error:', err);
+      setMessage({ type: 'error', text: 'Ein Fehler ist aufgetreten.' });
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleLogout = async () => {
+  const handlePortal = async () => {
+    if (!user) return;
+    setLoading(true);
     try {
-      await signOut(auth);
+      const response = await fetch('/api/create-portal-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.uid })
+      });
+      const data = await response.json();
+      if (data.success && data.url) {
+        window.location.href = data.url;
+      } else {
+        setMessage({ type: 'error', text: data.message || 'Fehler beim Öffnen des Portals.' });
+      }
     } catch (err) {
-      console.error('Logout Fehler:', err);
+      console.error('Portal Error:', err);
+      setMessage({ type: 'error', text: 'Ein Fehler ist aufgetreten.' });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -156,18 +165,103 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
     company_address: '',
     company_vat_id: '',
     company_iban: '',
-    has_master_craftsman: 0
+    has_master_craftsman: 0,
+    maintenance_mode: 'false'
   });
 
   useEffect(() => {
-    if (isLoggedIn) {
+    // Redirect to dashboard if no permission for current tab
+    const tabToModule: Record<string, string> = {
+      'content': 'content',
+      'media': 'media',
+      'settings': 'settings',
+      'users': 'settings',
+      'reports': 'settings',
+      'sketches': 'settings',
+      'calc': 'calculation',
+      'rates': 'calculation',
+      'catalog': 'calculation',
+      'quotes': 'calculation',
+      'projects': 'calculation',
+      'projects_visual': 'calculation',
+      'customers': 'calculation',
+      'diaries': 'calculation',
+      'change-orders': 'calculation',
+      'invoices': 'calculation',
+      'resources': 'calculation'
+    };
+
+    const module = tabToModule[activeTab];
+    if (module && !hasPermission(module)) {
+      setActiveTab('dashboard');
+    }
+  }, [activeTab, permissions]);
+
+  useEffect(() => {
+    if (user) {
       fetchContent();
       fetchMedia();
       fetchTrades();
+      fetchCatalog();
+      fetchAllLaborRates();
       fetchRoles();
       fetchSettings();
+      fetchUserProfile();
+      fetchUsers();
+
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('session_id')) {
+        setMessage({ type: 'success', text: 'Vielen Dank! Ihr Abonnement wurde erfolgreich aktiviert.' });
+        // Clean up URL
+        const tab = params.get('tab');
+        window.history.replaceState({}, document.title, window.location.pathname + (tab ? `?tab=${tab}` : ''));
+      }
     }
-  }, [isLoggedIn]);
+  }, [user]);
+
+  const fetchUserProfile = async () => {
+    if (!user) return;
+    try {
+      const res = await fetch(`/api/user/profile?userId=${user.uid}`);
+      const data = await res.json();
+      if (data.success) setUserProfile(data.user);
+    } catch (err) {
+      console.error('Error fetching user profile:', err);
+    }
+  };
+
+  const fetchUsers = async () => {
+    try {
+      const res = await fetch('/api/users');
+      const data = await res.json();
+      if (data.success) setUsersList(data.users);
+    } catch (err) {
+      console.error('Error fetching users:', err);
+    }
+  };
+
+  const updateUserRole = async (userId: string, roleId: string) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/users/${userId}/role`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roleId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setMessage({ type: 'success', text: 'Benutzerrolle aktualisiert.' });
+        fetchUsers();
+      } else {
+        setMessage({ type: 'error', text: data.message || 'Fehler beim Aktualisieren.' });
+      }
+    } catch (err) {
+      console.error('Error updating user role:', err);
+      setMessage({ type: 'error', text: 'Ein Fehler ist aufgetreten.' });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const fetchSettings = async () => {
     try {
@@ -239,6 +333,16 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
     }
   };
 
+  const fetchCatalog = async () => {
+    try {
+      const res = await fetch('/api/catalog');
+      const data = await res.json();
+      setCatalog(data);
+    } catch (err) {
+      console.error('Error fetching catalog:', err);
+    }
+  };
+
   const fetchTrades = async () => {
     const res = await fetch('/api/trades');
     const data = await res.json();
@@ -304,7 +408,8 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
     }
   };
 
-  const fetchTradeDetails = async (tradeId: number) => {
+  const fetchTradeDetails = async (tradeId: string | null) => {
+    if (!tradeId) return;
     setSelectedTrade(tradeId);
     const [ratesRes, itemsRes] = await Promise.all([
       fetch(`/api/trades/${tradeId}/labor-rates`),
@@ -318,15 +423,22 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
     e.preventDefault();
     setLoading(true);
     try {
+      // Auto-assign attributes if pilot trade
+      const pilotAttrs = PILOT_TRADE_ATTRIBUTES[newTrade.name] || [];
+      const tradeToCreate = { 
+        ...newTrade, 
+        attribute_definitions: newTrade.attribute_definitions.length > 0 ? newTrade.attribute_definitions : pilotAttrs 
+      };
+
       const res = await fetch('/api/trades', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newTrade)
+        body: JSON.stringify(tradeToCreate)
       });
       const data = await res.json();
       if (data.success) {
         setMessage({ type: 'success', text: 'Gewerk erfolgreich erstellt' });
-        setNewTrade({ name: '', description: '', is_anlage_a: 0 });
+        setNewTrade({ name: '', description: '', is_anlage_a: 0, attribute_definitions: [] });
         setShowNewTradeForm(false);
         fetchTrades();
       }
@@ -363,7 +475,7 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
     }
   };
 
-  const deleteTrade = async (id: number) => {
+  const deleteTrade = async (id: string) => {
     if (confirm('Möchten Sie dieses Gewerk wirklich löschen? Alle zugehörigen Lohnsätze und Leistungen gehen verloren.')) {
       setLoading(true);
       try {
@@ -372,6 +484,7 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
           setMessage({ type: 'success', text: 'Gewerk gelöscht' });
           if (selectedTrade === id) setSelectedTrade(null);
           fetchTrades();
+          fetchAllLaborRates();
         }
       } catch (err) {
         setMessage({ type: 'error', text: 'Fehler beim Löschen' });
@@ -471,7 +584,7 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
     }
   };
 
-  const deleteServiceItem = async (id: number) => {
+  const deleteServiceItem = async (id: string) => {
     if (confirm('Möchten Sie diese Leistung wirklich löschen?')) {
       setLoading(true);
       try {
@@ -502,7 +615,8 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
         body: formData
       });
       if (res.ok) {
-        setMessage({ type: 'success', text: 'CSV erfolgreich importiert' });
+        const data = await res.json();
+        setMessage({ type: 'success', text: `${data.count || 0} Leistungen erfolgreich importiert` });
         fetchTradeDetails(selectedTrade);
       } else {
         const errorData = await res.json();
@@ -523,9 +637,10 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
       'Wandanstrich Innen (weiß),m²,0.25,4.50,Standard Innenanstrich mit Dispersionsfarbe inkl. Abkleben',
       'Fassadenanstrich (Silikonharz),m²,0.45,8.20,Hochwertiger Außenanstrich wetterbeständig',
       'Tapezieren (Raufaser),m²,0.60,3.50,Anbringen von Raufasertapete inkl. Kleister',
-      'Grundierung (Tiefgrund),m²,0.10,1.50,Vorbereitung des Untergrunds für Folgeanstriche'
+      'Grundierung (Tiefgrund),m²,0.10,1.50,Vorbereitung des Untergrunds für Folgeanstriche',
+      'Trockenbauwand (einfach beplankt),m²,1.20,25.00,Ständerwerk inkl. Dämmung und Gipsplatten'
     ].join('\n');
-    const blob = new Blob([`${headers}\n${examples}`], { type: 'text/csv' });
+    const blob = new Blob([`${headers}\n${examples}`], { type: 'text/csv;charset=utf-8' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -621,14 +736,14 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
     fetchMedia();
   };
 
-  const deleteMedia = async (id: number) => {
+  const deleteMedia = async (id: string) => {
     if (confirm('Möchten Sie dieses Element wirklich löschen?')) {
       await fetch(`/api/media/${id}`, { method: 'DELETE' });
       fetchMedia();
     }
   };
 
-  if (isCheckingAdmin) {
+  if (authLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-primary"></div>
@@ -636,7 +751,7 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
     );
   }
 
-  if (!isLoggedIn || !isAdmin) {
+  if (!user || !isAdmin) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6 font-sans">
         <motion.div 
@@ -650,15 +765,15 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
             </div>
           </div>
           <h1 className="text-3xl font-black text-brand-dark text-center mb-2 tracking-tighter">
-            {!isLoggedIn ? 'Admin Login' : 'Zugriff verweigert'}
+            {!user ? 'Admin Login' : 'Zugriff verweigert'}
           </h1>
           <p className="text-slate-400 text-center mb-10 font-medium">
-            {!isLoggedIn 
+            {!user 
               ? 'Los Facility Service Management' 
               : 'Sie haben keine Administrator-Berechtigungen.'}
           </p>
           
-          {!isLoggedIn ? (
+          {!user ? (
             <button 
               onClick={handleLogin}
               className="w-full bg-brand-dark text-white rounded-2xl py-4 font-bold hover:bg-brand-primary transition-all shadow-xl shadow-brand-dark/20 flex items-center justify-center gap-3"
@@ -711,121 +826,144 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
             icon={<LayoutDashboard size={20} />}
             label="Dashboard"
           />
-          <SidebarLink 
-            id="admin-sidebar-projects-visual"
-            active={activeTab === 'projects_visual'} 
-            onClick={() => setActiveTab('projects_visual')}
-            icon={<BarChart3 size={20} />}
-            label="Projekt-Übersicht"
-          />
-          <SidebarLink 
-            id="admin-sidebar-projects"
-            active={activeTab === 'projects'} 
-            onClick={() => setActiveTab('projects')}
-            icon={<ClipboardList size={20} />}
-            label="Projekt-Liste"
-          />
-          <SidebarLink 
-            id="admin-sidebar-customers"
-            active={activeTab === 'customers'} 
-            onClick={() => setActiveTab('customers')}
-            icon={<Users size={20} />}
-            label="Kunden (CRM)"
-          />
-          <SidebarLink 
-            id="admin-sidebar-content"
-            active={activeTab === 'content'} 
-            onClick={() => setActiveTab('content')}
-            icon={<FileText size={20} />}
-            label="Inhalte"
-          />
-          <SidebarLink 
-            id="admin-sidebar-media"
-            active={activeTab === 'media'} 
-            onClick={() => setActiveTab('media')}
-            icon={<ImageIcon size={20} />}
-            label="Medien"
-          />
-          <SidebarLink 
-            id="admin-sidebar-catalog"
-            active={activeTab === 'catalog'} 
-            onClick={() => setActiveTab('catalog')}
-            icon={<ClipboardList size={20} />}
-            label="Service-Katalog"
-          />
-          <SidebarLink 
-            id="admin-sidebar-calc"
-            active={activeTab === 'calc'} 
-            onClick={() => setActiveTab('calc')}
-            icon={<HardHat size={20} />}
-            label="Gewerke-Verwaltung"
-          />
-          <SidebarLink 
-            id="admin-sidebar-rates"
-            active={activeTab === 'rates'} 
-            onClick={() => setActiveTab('rates')}
-            icon={<Euro size={20} />}
-            label="Lohnsätze"
-          />
-          <SidebarLink 
-            id="admin-sidebar-quotes"
-            active={activeTab === 'quotes'} 
-            onClick={() => {
-              setSelectedProjectId(null);
-              setActiveTab('quotes');
-            }}
-            icon={<FileText size={20} />}
-            label="Angebots-Builder"
-          />
-          <SidebarLink 
-            id="admin-sidebar-diaries"
-            active={activeTab === 'diaries'} 
-            onClick={() => setActiveTab('diaries')}
-            icon={<ClipboardList size={20} />}
-            label="Bautagebuch"
-          />
-          <SidebarLink 
-            id="admin-sidebar-change-orders"
-            active={activeTab === 'change-orders'} 
-            onClick={() => setActiveTab('change-orders')}
-            icon={<Clock size={20} />}
-            label="Nachträge"
-          />
-          <SidebarLink 
-            id="admin-sidebar-invoices"
-            active={activeTab === 'invoices'} 
-            onClick={() => setActiveTab('invoices')}
-            icon={<Receipt size={20} />}
-            label="Rechnungswesen"
-          />
-          <SidebarLink 
-            id="admin-sidebar-resources"
-            active={activeTab === 'resources'} 
-            onClick={() => setActiveTab('resources')}
-            icon={<Users size={20} />}
-            label="Ressourcen"
-          />
-          <SidebarLink 
-            id="admin-sidebar-reports"
-            active={activeTab === 'reports'} 
-            onClick={() => setActiveTab('reports')}
-            icon={<BarChart3 size={20} />}
-            label="Berichte"
-          />
-          <SidebarLink 
-            id="admin-sidebar-sketches"
-            active={activeTab === 'sketches'} 
-            onClick={() => setActiveTab('sketches')}
-            icon={<Pencil size={20} />}
-            label="Skizzen"
-          />
-          <SidebarLink 
-            id="admin-sidebar-settings"
-            active={activeTab === 'settings'} 
-            onClick={() => setActiveTab('settings')}
-            icon={<SettingsIcon size={20} />}
-            label="Einstellungen"
-          />
+          {hasPermission('calculation') && (
+            <>
+              <SidebarLink 
+                id="admin-sidebar-projects-visual"
+                active={activeTab === 'projects_visual'} 
+                onClick={() => setActiveTab('projects_visual')}
+                icon={<BarChart3 size={20} />}
+                label="Projekt-Übersicht"
+              />
+              <SidebarLink 
+                id="admin-sidebar-projects"
+                active={activeTab === 'projects'} 
+                onClick={() => setActiveTab('projects')}
+                icon={<ClipboardList size={20} />}
+                label="Projekt-Liste"
+              />
+              <SidebarLink 
+                id="admin-sidebar-customers"
+                active={activeTab === 'customers'} 
+                onClick={() => setActiveTab('customers')}
+                icon={<Users size={20} />}
+                label="Kunden (CRM)"
+              />
+            </>
+          )}
+          {hasPermission('content') && (
+            <SidebarLink 
+              id="admin-sidebar-content"
+              active={activeTab === 'content'} 
+              onClick={() => setActiveTab('content')}
+              icon={<FileText size={20} />}
+              label="Inhalte"
+            />
+          )}
+          {hasPermission('media') && (
+            <SidebarLink 
+              id="admin-sidebar-media"
+              active={activeTab === 'media'} 
+              onClick={() => setActiveTab('media')}
+              icon={<ImageIcon size={20} />}
+              label="Medien"
+            />
+          )}
+          {hasPermission('calculation') && (
+            <>
+              <SidebarLink 
+                id="admin-sidebar-catalog"
+                active={activeTab === 'catalog'} 
+                onClick={() => setActiveTab('catalog')}
+                icon={<ClipboardList size={20} />}
+                label="Service-Katalog"
+              />
+              <SidebarLink 
+                id="admin-sidebar-calc"
+                active={activeTab === 'calc'} 
+                onClick={() => setActiveTab('calc')}
+                icon={<HardHat size={20} />}
+                label="Gewerke-Verwaltung"
+              />
+              <SidebarLink 
+                id="admin-sidebar-rates"
+                active={activeTab === 'rates'} 
+                onClick={() => setActiveTab('rates')}
+                icon={<Euro size={20} />}
+                label="Lohnsätze"
+              />
+              <SidebarLink 
+                id="admin-sidebar-quotes"
+                active={activeTab === 'quotes'} 
+                onClick={() => {
+                  setSelectedProjectId(null);
+                  setActiveTab('quotes');
+                }}
+                icon={<FileText size={20} />}
+                label="Angebots-Builder"
+              />
+              <SidebarLink 
+                id="admin-sidebar-diaries"
+                active={activeTab === 'diaries'} 
+                onClick={() => setActiveTab('diaries')}
+                icon={<ClipboardList size={20} />}
+                label="Bautagebuch"
+              />
+              <SidebarLink 
+                id="admin-sidebar-change-orders"
+                active={activeTab === 'change-orders'} 
+                onClick={() => setActiveTab('change-orders')}
+                icon={<Clock size={20} />}
+                label="Nachträge"
+              />
+              <SidebarLink 
+                id="admin-sidebar-invoices"
+                active={activeTab === 'invoices'} 
+                onClick={() => setActiveTab('invoices')}
+                icon={<Receipt size={20} />}
+                label="Rechnungswesen"
+              />
+              <SidebarLink 
+                id="admin-sidebar-resources"
+                active={activeTab === 'resources'} 
+                onClick={() => setActiveTab('resources')}
+                icon={<Users size={20} />}
+                label="Ressourcen"
+              />
+            </>
+          )}
+          {hasPermission('settings') && (
+            <>
+              <SidebarLink 
+                id="admin-sidebar-users"
+                active={activeTab === 'users'} 
+                onClick={() => setActiveTab('users')}
+                icon={<Users size={20} />}
+                label="Benutzerverwaltung"
+              />
+              <SidebarLink 
+                id="admin-sidebar-reports"
+                active={activeTab === 'reports'} 
+                onClick={() => setActiveTab('reports')}
+                icon={<BarChart3 size={20} />}
+                label="Berichte"
+              />
+              <SidebarLink 
+                id="admin-sidebar-sketches"
+                active={activeTab === 'sketches'} 
+                onClick={() => setActiveTab('sketches')}
+                icon={<Pencil size={20} />}
+                label="Skizzen"
+              />
+              <SidebarLink 
+                id="admin-sidebar-settings"
+                active={activeTab === 'settings'} 
+                onClick={() => setActiveTab('settings')}
+                icon={<SettingsIcon size={20} />}
+                label="Einstellungen"
+              />
+            </>
+          )}
         </nav>
 
         <button 
@@ -877,6 +1015,7 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
               {activeTab === 'reports' && 'Projektberichte'}
               {activeTab === 'sketches' && 'Skizzen & Visualisierung'}
               {activeTab === 'settings' && 'System Einstellungen'}
+              {activeTab === 'users' && 'Benutzerverwaltung'}
             </h2>
             <p className="text-slate-400 font-medium mt-2">Verwalten Sie Ihre Webseite in Echtzeit.</p>
           </div>
@@ -900,11 +1039,11 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
               exit={{ opacity: 0, y: -20 }}
             >
               <AdminDashboard 
-                onSelectProject={(id: number) => {
+                onSelectProject={(id: string) => {
                   setSelectedProjectId(id);
                   setActiveTab('quotes');
                 }} 
-                onViewDiary={(id: number) => {
+                onViewDiary={(id: string) => {
                   setSelectedProjectId(id);
                   setActiveTab('diaries');
                 }}
@@ -920,13 +1059,17 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
               exit={{ opacity: 0, y: -20 }}
             >
               <ProjectVisualOverview 
-                onEditProject={(id: number) => {
+                onEditProject={(id: string) => {
                   setSelectedProjectId(id);
                   setActiveTab('quotes');
                 }} 
-                onViewDiary={(id: number) => {
+                onViewDiary={(id: string) => {
                   setSelectedProjectId(id);
                   setActiveTab('diaries');
+                }}
+                onViewChangeOrders={(id: string) => {
+                  setSelectedProjectId(id);
+                  setActiveTab('change-orders');
                 }}
               />
             </motion.div>
@@ -940,13 +1083,17 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
               exit={{ opacity: 0, y: -20 }}
             >
               <ProjectOverview 
-                onEditProject={(id: number) => {
+                onEditProject={(id: string) => {
                   setSelectedProjectId(id);
                   setActiveTab('quotes');
                 }} 
-                onViewDiary={(id: number) => {
+                onViewDiary={(id: string) => {
                   setSelectedProjectId(id);
                   setActiveTab('diaries');
+                }}
+                onViewChangeOrders={(id: string) => {
+                  setSelectedProjectId(id);
+                  setActiveTab('change-orders');
                 }}
               />
             </motion.div>
@@ -1153,11 +1300,223 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
               className="space-y-8"
             >
               <div className="bg-white p-12 rounded-[2.5rem] shadow-sm border border-slate-100">
-                <div className="mb-12">
-                  <h4 className="text-3xl font-black text-brand-dark tracking-tighter">Zentraler Service-Katalog</h4>
-                  <p className="text-slate-400 text-sm font-medium">Verwalten Sie hier alle Leistungen gewerkeübergreifend.</p>
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-12">
+                  <div>
+                    <h4 className="text-3xl font-black text-brand-dark tracking-tighter">Zentraler Service-Katalog</h4>
+                    <p className="text-slate-400 text-sm font-medium">Verwalten Sie hier alle Leistungen und Gewerke gewerkeübergreifend.</p>
+                  </div>
                 </div>
-                <ServiceCatalog adminMode={true} />
+
+                <Tabs 
+                  tabs={[
+                    {
+                      id: 'services',
+                      label: 'Leistungen',
+                      icon: <ClipboardList size={16} />,
+                      content: (
+                        <div className="space-y-8">
+                          <div className="flex justify-end">
+                            <button 
+                              onClick={() => setShowDatanormImport(!showDatanormImport)}
+                              className="flex items-center gap-2 bg-brand-secondary text-white px-6 py-3 rounded-2xl font-bold hover:bg-brand-dark transition-all text-sm uppercase tracking-widest shadow-xl shadow-brand-secondary/20"
+                            >
+                              <Database size={18} />
+                              Datanorm Import
+                            </button>
+                          </div>
+
+                          <AnimatePresence>
+                            {showDatanormImport && (
+                              <motion.div 
+                                initial={{ height: 0, opacity: 0 }}
+                                animate={{ height: 'auto', opacity: 1 }}
+                                exit={{ height: 0, opacity: 0 }}
+                                className="mb-12 overflow-hidden"
+                              >
+                                <DatanormImport onComplete={() => { fetchCatalog(); fetchTrades(); }} />
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+
+                          <ServiceCatalog 
+                            adminMode={true} 
+                            catalog={catalog} 
+                            onUpdate={() => { fetchCatalog(); fetchTrades(); }} 
+                          />
+                        </div>
+                      )
+                    },
+                    {
+                      id: 'trades',
+                      label: 'Gewerke-Verwaltung',
+                      icon: <HardHat size={16} />,
+                      content: (
+                        <div className="space-y-12">
+                          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-12">
+                            <div>
+                              <h4 className="text-xl font-black text-brand-dark tracking-tighter">Verfügbare Gewerke</h4>
+                              <p className="text-slate-400 text-xs font-medium">Verwalten Sie Ihre Gewerke und deren Eigenschaften.</p>
+                            </div>
+                            <div className="flex items-center gap-4 w-full md:w-auto">
+                              <button 
+                                onClick={async () => {
+                                  if (confirm('Möchten Sie die Pilot-Daten (Maler, Elektriker, etc.) wirklich laden? Dies kann zu Duplikaten führen.')) {
+                                    setLoading(true);
+                                    try {
+                                      const res = await fetch('/api/seed-catalog', { method: 'POST' });
+                                      const data = await res.json();
+                                      if (data.success) {
+                                        alert(data.message);
+                                        window.location.reload();
+                                      }
+                                    } catch (err) {
+                                      alert('Fehler beim Laden der Pilot-Daten.');
+                                    } finally {
+                                      setLoading(false);
+                                    }
+                                  }
+                                }}
+                                className="flex items-center gap-2 bg-slate-100 text-slate-600 px-6 py-3 rounded-2xl font-bold hover:bg-slate-200 transition-all text-sm uppercase tracking-widest"
+                              >
+                                <Download size={18} />
+                                Pilot-Daten laden
+                              </button>
+                              <div className="relative flex-1 md:w-64">
+                                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                                <input 
+                                  type="text" 
+                                  placeholder="Gewerke suchen..."
+                                  value={searchTerm}
+                                  onChange={(e) => setSearchTerm(e.target.value)}
+                                  className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:border-brand-primary/30 transition-all text-sm font-medium"
+                                />
+                              </div>
+                              <button 
+                                onClick={() => setShowNewTradeForm(!showNewTradeForm)}
+                                className="flex items-center gap-2 bg-brand-dark text-white px-6 py-3 rounded-2xl font-bold hover:bg-brand-primary transition-all text-sm uppercase tracking-widest whitespace-nowrap"
+                              >
+                                <Plus size={18} />
+                                Neu
+                              </button>
+                            </div>
+                          </div>
+
+                          <AnimatePresence>
+                            {showNewTradeForm && (
+                              <motion.form 
+                                initial={{ height: 0, opacity: 0 }}
+                                animate={{ height: 'auto', opacity: 1 }}
+                                exit={{ height: 0, opacity: 0 }}
+                                onSubmit={createTrade}
+                                className="mb-12 p-8 bg-slate-50 rounded-3xl border border-slate-200 overflow-hidden"
+                              >
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                                  <div>
+                                    <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Name des Gewerks</label>
+                                    <input 
+                                      type="text" 
+                                      required
+                                      value={newTrade.name}
+                                      onChange={e => setNewTrade({ ...newTrade, name: e.target.value })}
+                                      className="w-full bg-white border border-slate-200 rounded-2xl py-3 px-4 outline-none focus:border-brand-primary/30 transition-all font-bold"
+                                      placeholder="z.B. Bodenleger"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Beschreibung</label>
+                                    <input 
+                                      type="text" 
+                                      value={newTrade.description}
+                                      onChange={e => setNewTrade({ ...newTrade, description: e.target.value })}
+                                      className="w-full bg-white border border-slate-200 rounded-2xl py-3 px-4 outline-none focus:border-brand-primary/30 transition-all font-bold"
+                                      placeholder="Kurze Beschreibung"
+                                    />
+                                  </div>
+                                  <div className="flex items-end pb-3">
+                                    <label className="flex items-center gap-3 cursor-pointer group">
+                                      <div className="relative">
+                                        <input 
+                                          type="checkbox" 
+                                          checked={newTrade.is_anlage_a === 1}
+                                          onChange={e => setNewTrade({ ...newTrade, is_anlage_a: e.target.checked ? 1 : 0 })}
+                                          className="sr-only"
+                                        />
+                                        <div className={`w-12 h-6 rounded-full transition-colors ${newTrade.is_anlage_a ? 'bg-brand-primary' : 'bg-slate-200'}`}></div>
+                                        <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${newTrade.is_anlage_a ? 'translate-x-6' : ''}`}></div>
+                                      </div>
+                                      <span className="text-xs font-bold text-slate-600 uppercase tracking-widest group-hover:text-brand-primary transition-colors">Meisterpflicht (Anlage A)</span>
+                                    </label>
+                                  </div>
+                                </div>
+                                <div className="flex gap-4">
+                                  <button 
+                                    type="submit"
+                                    disabled={loading}
+                                    className="bg-brand-primary text-white px-8 py-3 rounded-xl font-bold hover:bg-brand-dark transition-all"
+                                  >
+                                    {loading ? 'Speichern...' : 'Gewerk Speichern'}
+                                  </button>
+                                  <button 
+                                    type="button"
+                                    onClick={() => setShowNewTradeForm(false)}
+                                    className="bg-slate-200 text-slate-600 px-8 py-3 rounded-xl font-bold hover:bg-slate-300 transition-all"
+                                  >
+                                    Abbrechen
+                                  </button>
+                                </div>
+                              </motion.form>
+                            )}
+                          </AnimatePresence>
+
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            {trades
+                              .filter(t => 
+                                t.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                                t.description?.toLowerCase().includes(searchTerm.toLowerCase())
+                              )
+                              .map((trade) => (
+                                <div key={trade.id} className="bg-slate-50 p-6 rounded-3xl border border-slate-200 hover:border-brand-primary/30 transition-all group">
+                                  <div className="flex justify-between items-start mb-4">
+                                    <div className="p-3 bg-white rounded-2xl shadow-sm group-hover:bg-brand-primary group-hover:text-white transition-all">
+                                      <HardHat size={24} />
+                                    </div>
+                                    <div className="flex gap-2">
+                                      <button 
+                                        onClick={() => setEditingTrade(trade)}
+                                        className="p-2 text-slate-400 hover:text-brand-primary transition-colors"
+                                      >
+                                        <Edit3 size={18} />
+                                      </button>
+                                      <button 
+                                        onClick={() => deleteTrade(trade.id)}
+                                        className="p-2 text-slate-400 hover:text-red-500 transition-colors"
+                                      >
+                                        <Trash2 size={18} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <h5 className="text-lg font-black text-brand-dark tracking-tighter mb-1">{trade.name}</h5>
+                                  <p className="text-slate-400 text-xs font-medium mb-4 line-clamp-2">{trade.description || 'Keine Beschreibung'}</p>
+                                  <div className="flex items-center gap-2">
+                                    {trade.is_anlage_a === 1 && (
+                                      <span className="px-3 py-1 bg-brand-primary/10 text-brand-primary text-[10px] font-bold uppercase tracking-widest rounded-full">
+                                        Meisterpflicht
+                                      </span>
+                                    )}
+                                    <span className="px-3 py-1 bg-slate-200 text-slate-600 text-[10px] font-bold uppercase tracking-widest rounded-full">
+                                      {trade.attribute_definitions?.length || 0} Attribute
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                          </div>
+                        </div>
+                      )
+                    }
+                  ]}
+                  activeTab={catalogSubTab}
+                  onTabChange={(id) => setCatalogSubTab(id as 'services' | 'trades')}
+                />
               </div>
             </motion.div>
           )}
@@ -1185,6 +1544,28 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
                             <p className="text-slate-400 text-xs font-medium">Verwalten Sie Ihre Gewerke und Leistungen.</p>
                           </div>
                           <div className="flex items-center gap-4 w-full md:w-auto">
+                            <button 
+                              onClick={async () => {
+                                if (confirm('Möchten Sie die Pilot-Daten (Maler, Elektriker, etc.) wirklich laden? Dies kann zu Duplikaten führen.')) {
+                                  setLoading(true);
+                                  try {
+                                    const res = await fetch('/api/seed-catalog', { method: 'POST' });
+                                    const data = await res.json();
+                                    if (data.success) {
+                                      alert(data.message);
+                                      window.location.reload();
+                                    }
+                                  } catch (err) {
+                                    alert('Fehler beim Laden der Pilot-Daten.');
+                                  } finally {
+                                    setLoading(false);
+                                  }
+                                }
+                              }}
+                              className="flex items-center gap-2 bg-slate-100 text-slate-600 px-6 py-3 rounded-2xl font-bold hover:bg-slate-200 transition-all text-sm uppercase tracking-widest whitespace-nowrap"
+                            >
+                              Pilot-Daten laden
+                            </button>
                             <div className="relative flex-1 md:w-64">
                               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                               <input 
@@ -1634,88 +2015,8 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
                       </div>
                     )
                   },
-                    {
-                      id: 'rates',
-                      label: 'Lohnsätze',
-                      icon: <Euro size={16} />,
-                      content: (
-                        <div className="space-y-8">
-                          <div className="flex justify-between items-center mb-12">
-                            <div className="flex flex-col">
-                              <h4 className="text-2xl font-black text-brand-dark tracking-tighter">Globale Lohnsätze</h4>
-                              <p className="text-slate-400 font-medium text-sm">Übersicht und Bearbeitung aller Stundensätze pro Gewerk.</p>
-                            </div>
-                            <button 
-                              onClick={saveAllLaborRates}
-                              disabled={loading}
-                              className="flex items-center gap-2 bg-brand-primary text-white px-8 py-4 rounded-2xl hover:bg-brand-dark transition-all font-black text-xs uppercase tracking-widest shadow-xl shadow-brand-primary/20"
-                            >
-                              <Save size={20} />
-                              Alle Speichern
-                            </button>
-                          </div>
-
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-left border-collapse">
-                              <thead>
-                                <tr className="border-b border-slate-100">
-                                  <th className="py-4 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Gewerk</th>
-                                  <th className="py-4 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Meister (€/h)</th>
-                                  <th className="py-4 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Geselle (€/h)</th>
-                                  <th className="py-4 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Helfer (€/h)</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {Array.from(new Set(allLaborRates.map(r => r.trade_name))).map(tradeName => {
-                                  const tradeRates = allLaborRates.filter(r => r.trade_name === tradeName);
-                                  const meister = tradeRates.find(r => r.worker_type === 'Meister');
-                                  const geselle = tradeRates.find(r => r.worker_type === 'Geselle');
-                                  const helfer = tradeRates.find(r => r.worker_type === 'Helfer');
-
-                                  return (
-                                    <tr key={tradeName} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                                      <td className="py-6 px-4 font-bold text-brand-dark">{tradeName}</td>
-                                      <td className="py-6 px-4">
-                                        {meister && (
-                                          <input 
-                                            type="number"
-                                            value={meister.hourly_rate}
-                                            onChange={(e) => setAllLaborRates(prev => prev.map(r => r.id === meister.id ? { ...r, hourly_rate: parseFloat(e.target.value) || 0 } : r))}
-                                            className="w-24 bg-white border border-slate-200 rounded-xl p-3 text-right font-black text-brand-primary focus:border-brand-primary outline-none transition-all shadow-sm"
-                                          />
-                                        )}
-                                      </td>
-                                      <td className="py-6 px-4">
-                                        {geselle && (
-                                          <input 
-                                            type="number"
-                                            value={geselle.hourly_rate}
-                                            onChange={(e) => setAllLaborRates(prev => prev.map(r => r.id === geselle.id ? { ...r, hourly_rate: parseFloat(e.target.value) || 0 } : r))}
-                                            className="w-24 bg-white border border-slate-200 rounded-xl p-3 text-right font-black text-brand-primary focus:border-brand-primary outline-none transition-all shadow-sm"
-                                          />
-                                        )}
-                                      </td>
-                                      <td className="py-6 px-4">
-                                        {helfer && (
-                                          <input 
-                                            type="number"
-                                            value={helfer.hourly_rate}
-                                            onChange={(e) => setAllLaborRates(prev => prev.map(r => r.id === helfer.id ? { ...r, hourly_rate: parseFloat(e.target.value) || 0 } : r))}
-                                            className="w-24 bg-white border border-slate-200 rounded-xl p-3 text-right font-black text-brand-primary focus:border-brand-primary outline-none transition-all shadow-sm"
-                                          />
-                                        )}
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                      )
-                    },
-                    {
-                      id: 'preview',
+                  {
+                    id: 'preview',
                       label: 'Vorschau & Test',
                       icon: <Globe size={16} />,
                       content: (
@@ -1922,7 +2223,7 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
               className="space-y-8"
             >
               <div className="bg-white p-12 rounded-[2.5rem] shadow-sm border border-slate-100">
-                <div className="flex items-center justify-between mb-12">
+                <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 mb-12">
                   <div className="flex items-center gap-6">
                     <div className="w-16 h-16 bg-brand-primary/10 rounded-2xl flex items-center justify-center text-brand-primary">
                       <HardHat size={32} />
@@ -1932,12 +2233,24 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
                       <p className="text-slate-400 font-medium">Verwalten Sie die Stundenverrechnungssätze für verschiedene Mitarbeiter-Typen.</p>
                     </div>
                   </div>
-                  <button 
-                    onClick={saveLaborRates}
-                    className="flex items-center gap-2 px-8 py-4 bg-brand-primary text-white rounded-2xl font-black uppercase tracking-widest hover:bg-brand-dark transition-all shadow-lg shadow-brand-primary/20"
-                  >
-                    <Save size={20} /> Änderungen Speichern
-                  </button>
+                  <div className="flex items-center gap-4 w-full md:w-auto">
+                    <div className="relative flex-1 md:w-64">
+                      <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                      <input 
+                        type="text" 
+                        placeholder="Gewerke suchen..."
+                        value={ratesSearchTerm}
+                        onChange={(e) => setRatesSearchTerm(e.target.value)}
+                        className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:border-brand-primary/30 transition-all text-sm font-medium"
+                      />
+                    </div>
+                    <button 
+                      onClick={saveAllLaborRates}
+                      className="flex items-center gap-2 px-8 py-4 bg-brand-primary text-white rounded-2xl font-black uppercase tracking-widest hover:bg-brand-dark transition-all shadow-lg shadow-brand-primary/20 whitespace-nowrap"
+                    >
+                      <Save size={20} /> Änderungen Speichern
+                    </button>
+                  </div>
                 </div>
 
                 <div className="overflow-x-auto">
@@ -1951,7 +2264,9 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
-                      {trades.map(trade => {
+                      {trades
+                        .filter(t => t.name.toLowerCase().includes(ratesSearchTerm.toLowerCase()))
+                        .map(trade => {
                         const meister = allLaborRates.find(r => r.trade_id === trade.id && r.worker_type === 'Meister');
                         const geselle = allLaborRates.find(r => r.trade_id === trade.id && r.worker_type === 'Geselle');
                         const helfer = allLaborRates.find(r => r.trade_id === trade.id && r.worker_type === 'Helfer');
@@ -1963,33 +2278,48 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
                               <div className="text-xs text-slate-400">{trade.description}</div>
                             </td>
                             <td className="py-6 px-4">
-                              {meister && (
-                                <input 
-                                  type="number"
-                                  value={meister.hourly_rate}
-                                  onChange={(e) => setAllLaborRates(prev => prev.map(r => r.id === meister.id ? { ...r, hourly_rate: parseFloat(e.target.value) || 0 } : r))}
-                                  className="w-24 bg-white border border-slate-200 rounded-xl p-3 text-right font-black text-brand-primary focus:border-brand-primary outline-none transition-all shadow-sm"
-                                />
+                              {meister ? (
+                                <div className="relative">
+                                  <input 
+                                    type="number"
+                                    value={meister.hourly_rate}
+                                    onChange={(e) => setAllLaborRates(prev => prev.map(r => r.id === meister.id ? { ...r, hourly_rate: parseFloat(e.target.value) || 0 } : r))}
+                                    className="w-32 bg-white border border-slate-200 rounded-xl p-3 pl-8 text-right font-black text-brand-primary focus:border-brand-primary outline-none transition-all shadow-sm"
+                                  />
+                                  <Euro size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
+                                </div>
+                              ) : (
+                                <span className="text-xs text-slate-300 italic">Nicht definiert</span>
                               )}
                             </td>
                             <td className="py-6 px-4">
-                              {geselle && (
-                                <input 
-                                  type="number"
-                                  value={geselle.hourly_rate}
-                                  onChange={(e) => setAllLaborRates(prev => prev.map(r => r.id === geselle.id ? { ...r, hourly_rate: parseFloat(e.target.value) || 0 } : r))}
-                                  className="w-24 bg-white border border-slate-200 rounded-xl p-3 text-right font-black text-brand-primary focus:border-brand-primary outline-none transition-all shadow-sm"
-                                />
+                              {geselle ? (
+                                <div className="relative">
+                                  <input 
+                                    type="number"
+                                    value={geselle.hourly_rate}
+                                    onChange={(e) => setAllLaborRates(prev => prev.map(r => r.id === geselle.id ? { ...r, hourly_rate: parseFloat(e.target.value) || 0 } : r))}
+                                    className="w-32 bg-white border border-slate-200 rounded-xl p-3 pl-8 text-right font-black text-brand-primary focus:border-brand-primary outline-none transition-all shadow-sm"
+                                  />
+                                  <Euro size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
+                                </div>
+                              ) : (
+                                <span className="text-xs text-slate-300 italic">Nicht definiert</span>
                               )}
                             </td>
                             <td className="py-6 px-4">
-                              {helfer && (
-                                <input 
-                                  type="number"
-                                  value={helfer.hourly_rate}
-                                  onChange={(e) => setAllLaborRates(prev => prev.map(r => r.id === helfer.id ? { ...r, hourly_rate: parseFloat(e.target.value) || 0 } : r))}
-                                  className="w-24 bg-white border border-slate-200 rounded-xl p-3 text-right font-black text-brand-primary focus:border-brand-primary outline-none transition-all shadow-sm"
-                                />
+                              {helfer ? (
+                                <div className="relative">
+                                  <input 
+                                    type="number"
+                                    value={helfer.hourly_rate}
+                                    onChange={(e) => setAllLaborRates(prev => prev.map(r => r.id === helfer.id ? { ...r, hourly_rate: parseFloat(e.target.value) || 0 } : r))}
+                                    className="w-32 bg-white border border-slate-200 rounded-xl p-3 pl-8 text-right font-black text-brand-primary focus:border-brand-primary outline-none transition-all shadow-sm"
+                                  />
+                                  <Euro size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
+                                </div>
+                              ) : (
+                                <span className="text-xs text-slate-300 italic">Nicht definiert</span>
                               )}
                             </td>
                           </tr>
@@ -2035,7 +2365,7 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
             >
-              <ChangeOrderManager />
+              <ChangeOrderManager initialProjectId={selectedProjectId} />
             </motion.div>
           )}
 
@@ -2058,6 +2388,73 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
               exit={{ opacity: 0, y: -20 }}
             >
               <ProjectReport />
+            </motion.div>
+          )}
+
+          {activeTab === 'users' && (
+            <motion.div 
+              key="users"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-8"
+            >
+              <div className="bg-white p-12 rounded-[2.5rem] shadow-sm border border-slate-100">
+                <div className="flex items-center gap-6 mb-12">
+                  <div className="w-16 h-16 bg-brand-primary/10 rounded-2xl flex items-center justify-center text-brand-primary">
+                    <Users size={32} />
+                  </div>
+                  <div>
+                    <h3 className="text-2xl font-black text-brand-dark tracking-tighter">Benutzerverwaltung</h3>
+                    <p className="text-slate-400 font-medium">Verwalten Sie Systembenutzer und weisen Sie Rollen zu.</p>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-slate-100">
+                        <th className="text-left py-6 px-4 text-xs font-bold text-slate-400 uppercase tracking-widest">Benutzer</th>
+                        <th className="text-left py-6 px-4 text-xs font-bold text-slate-400 uppercase tracking-widest">Email</th>
+                        <th className="text-left py-6 px-4 text-xs font-bold text-slate-400 uppercase tracking-widest">Aktuelle Rolle</th>
+                        <th className="text-left py-6 px-4 text-xs font-bold text-slate-400 uppercase tracking-widest">Aktion</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {usersList.map(userItem => (
+                        <tr key={userItem.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="py-6 px-4">
+                            <div className="font-black text-brand-dark">
+                              {userItem.first_name} {userItem.last_name}
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-medium uppercase tracking-widest">ID: {userItem.id}</div>
+                          </td>
+                          <td className="py-6 px-4">
+                            <div className="text-sm font-medium text-slate-600">{userItem.email}</div>
+                          </td>
+                          <td className="py-6 px-4">
+                            <span className="px-3 py-1 bg-slate-100 text-slate-600 rounded-full text-[10px] font-bold uppercase tracking-widest">
+                              {roles.find(r => r.id === userItem.role)?.name || userItem.role || 'Keine Rolle'}
+                            </span>
+                          </td>
+                          <td className="py-6 px-4">
+                            <select 
+                              value={userItem.role || ''}
+                              onChange={(e) => updateUserRole(userItem.id, e.target.value)}
+                              className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-xs font-bold text-brand-dark outline-none focus:border-brand-primary transition-all"
+                            >
+                              <option value="">Rolle wählen...</option>
+                              {roles.map(role => (
+                                <option key={role.id} value={role.id}>{role.name}</option>
+                              ))}
+                            </select>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </motion.div>
           )}
 
@@ -2097,9 +2494,12 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
                         <h4 className="font-bold text-brand-dark">Wartungsmodus</h4>
                         <p className="text-sm text-slate-400">Webseite für Besucher vorübergehend sperren.</p>
                       </div>
-                      <div className="w-14 h-8 bg-slate-200 rounded-full relative cursor-pointer">
-                        <div className="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow-sm" />
-                      </div>
+                      <button 
+                        onClick={() => setSettings({ ...settings, maintenance_mode: settings.maintenance_mode === 'true' ? 'false' : 'true' })}
+                        className={`w-14 h-8 rounded-full relative transition-all ${settings.maintenance_mode === 'true' ? 'bg-brand-primary' : 'bg-slate-200'}`}
+                      >
+                        <div className={`absolute top-1 w-6 h-6 bg-white rounded-full shadow-sm transition-all ${settings.maintenance_mode === 'true' ? 'left-7' : 'left-1'}`} />
+                      </button>
                     </div>
                     <div className="flex items-center justify-between p-6 bg-slate-50 rounded-2xl">
                       <div>
@@ -2129,14 +2529,59 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
 
                     <div className="flex items-center justify-between p-6 bg-slate-50 rounded-2xl">
                       <div>
+                        <h4 className="font-bold text-brand-dark">Meister im Betrieb</h4>
+                        <p className="text-sm text-slate-400">Geben Sie an, ob ein Meister für zulassungspflichtige Gewerke (Anlage A) vorhanden ist.</p>
+                      </div>
+                      <button 
+                        onClick={() => setSettings({ ...settings, has_master_craftsman: settings.has_master_craftsman === '1' ? '0' : '1' })}
+                        className={`w-14 h-8 rounded-full relative transition-all ${settings.has_master_craftsman === '1' ? 'bg-brand-primary' : 'bg-slate-200'}`}
+                      >
+                        <div className={`absolute top-1 w-6 h-6 bg-white rounded-full shadow-sm transition-all ${settings.has_master_craftsman === '1' ? 'left-7' : 'left-1'}`} />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between p-6 bg-slate-50 rounded-2xl">
+                      <div>
                         <h4 className="font-bold text-brand-dark">Abonnement & Abrechnung</h4>
                         <p className="text-sm text-slate-400">Verwalten Sie Ihren SaaS-Tarif (Stripe).</p>
                       </div>
                       <div className="flex items-center gap-4">
-                        <span className="text-[10px] font-bold bg-emerald-100 text-emerald-600 px-3 py-1 rounded-full uppercase tracking-widest">Premium Plan</span>
-                        <button className="text-brand-primary font-bold text-sm uppercase tracking-widest hover:text-brand-dark transition-colors">
-                          Upgrade
-                        </button>
+                        <div className="text-right mr-4">
+                          <p className="text-xs font-bold text-brand-dark uppercase tracking-widest">
+                            Tarif: {userProfile?.plan === 'pro' ? 'Profi' : userProfile?.plan === 'enterprise' ? 'Enterprise' : 'Basis'}
+                          </p>
+                          <p className="text-[10px] text-slate-400 font-medium">
+                            Status: {userProfile?.subscription_status === 'active' ? 'Aktiv' : 'Inaktiv'}
+                          </p>
+                        </div>
+                        {userProfile?.subscription_status === 'active' ? (
+                          <div className="flex items-center gap-4">
+                            <span className="text-[10px] font-bold bg-emerald-100 text-emerald-600 px-3 py-1 rounded-full uppercase tracking-widest">Aktiviert</span>
+                            <button 
+                              onClick={handlePortal}
+                              disabled={loading}
+                              className="text-brand-primary font-bold text-sm uppercase tracking-widest hover:text-brand-dark transition-colors disabled:opacity-50 flex items-center gap-2"
+                            >
+                              {loading ? 'Laden...' : (
+                                <>
+                                  <SettingsIcon size={14} />
+                                  Verwalten
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-4">
+                            <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-3 py-1 rounded-full uppercase tracking-widest">Basis</span>
+                            <button 
+                              onClick={handleUpgrade}
+                              disabled={loading}
+                              className="text-brand-primary font-bold text-sm uppercase tracking-widest hover:text-brand-dark transition-colors disabled:opacity-50"
+                            >
+                              {loading ? 'Laden...' : 'Upgrade'}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
 

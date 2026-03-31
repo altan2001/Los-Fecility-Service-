@@ -25,7 +25,7 @@ import {
   Cell
 } from 'recharts';
 
-export default function AdminDashboard({ onSelectProject, onViewDiary }: { onSelectProject?: (id: number) => void, onViewDiary?: (id: number) => void }) {
+export default function AdminDashboard({ onSelectProject, onViewDiary }: { onSelectProject?: (id: string) => void, onViewDiary?: (id: string) => void }) {
   const [stats, setStats] = useState({
     totalProjects: 0,
     activeProjects: 0,

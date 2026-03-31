@@ -174,7 +174,7 @@ export default function CustomerManagement() {
 
   const exportToCsv = () => {
     const headers = ['ID', 'Name', 'Firma', 'E-Mail', 'Telefon', 'Adresse', 'Kategorie', 'Notizen'];
-    const rows = customers.map(c => [
+    const rows = filteredCustomers.map(c => [
       c.id,
       c.name,
       c.company,
@@ -187,10 +187,11 @@ export default function CustomerManagement() {
 
     const csvContent = [
       headers.join(','),
-      ...rows.map(r => r.map(v => `"${v || ''}"`).join(','))
+      ...rows.map(r => r.map(v => `"${String(v || '').replace(/"/g, '""')}"`).join(','))
     ].join('\n');
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    // Add BOM for UTF-8 to ensure Excel handles German characters correctly
+    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
@@ -358,6 +359,7 @@ export default function CustomerManagement() {
             title="Kundenliste als CSV exportieren"
           >
             <Download size={20} />
+            <span>Export</span>
           </button>
           <button 
             id="customer-management-quick-add-toggle"

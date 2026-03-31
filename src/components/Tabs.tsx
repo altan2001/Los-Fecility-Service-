@@ -11,6 +11,8 @@ interface Tab {
 interface TabsProps {
   tabs: Tab[];
   defaultTabId?: string;
+  activeTab?: string;
+  onTabChange?: (id: string) => void;
   className?: string;
   tabClassName?: string;
   activeTabClassName?: string;
@@ -20,12 +22,23 @@ interface TabsProps {
 export const Tabs: React.FC<TabsProps> = ({
   tabs,
   defaultTabId,
+  activeTab,
+  onTabChange,
   className = '',
   tabClassName = '',
   activeTabClassName = '',
   contentClassName = '',
 }) => {
-  const [activeTabId, setActiveTabId] = useState(defaultTabId || tabs[0]?.id);
+  const [internalActiveTabId, setInternalActiveTabId] = useState(defaultTabId || tabs[0]?.id);
+  const activeTabId = activeTab || internalActiveTabId;
+
+  const handleTabClick = (id: string) => {
+    if (onTabChange) {
+      onTabChange(id);
+    } else {
+      setInternalActiveTabId(id);
+    }
+  };
 
   return (
     <div className={`w-full ${className}`}>
@@ -33,7 +46,7 @@ export const Tabs: React.FC<TabsProps> = ({
         {tabs.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTabId(tab.id)}
+            onClick={() => handleTabClick(tab.id)}
             className={`
               relative py-3 px-6 text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-2
               ${activeTabId === tab.id 

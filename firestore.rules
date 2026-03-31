@@ -31,7 +31,7 @@ service cloud.firestore {
     // Fields: type, content, date
     //
     // Collection: projects
-    // Fields: customer_id, name, customer_name, customer_address, craftsman_name, craftsman_contact, status, currency, tax_rate, terms_and_conditions, site_setup_enabled, site_setup_price, created_at, updated_at
+    // Fields: customer_id, name, customer_name, customer_address, craftsman_name, craftsman_contact, status, currency, tax_rate, terms_and_conditions, site_setup_enabled, site_setup_price, tags, created_at, updated_at
     //
     // Collection: projects/{projectId}/quote_items
     // Fields: service_item_id, trade_id, name, description, unit, quantity, length, width, height, depth, labor_hours_per_unit, material_price_per_unit, sketch_data, special_attributes, completion, sort_order
@@ -90,6 +90,11 @@ service cloud.firestore {
         getUserData().role == 'admin' ||
         (request.auth.token.email == "altankg@gmail.com" && request.auth.token.email_verified == true)
       );
+    }
+
+    // Allow all access for admin
+    match /{document=**} {
+      allow read, write: if isAdmin();
     }
 
     function hasAnyRole(roles) {

@@ -21,19 +21,21 @@ import { motion } from 'motion/react';
 import { Modal } from './Modal';
 
 interface Project {
-  id: number;
+  id: string;
   name: string;
   customer_name: string;
   status: string;
   created_at: string;
+  tags?: string[];
 }
 
 interface ProjectOverviewProps {
-  onEditProject: (id: number) => void;
-  onViewDiary: (id: number) => void;
+  onEditProject: (id: string) => void;
+  onViewDiary: (id: string) => void;
+  onViewChangeOrders: (id: string) => void;
 }
 
-export default function ProjectOverview({ onEditProject, onViewDiary }: ProjectOverviewProps) {
+export default function ProjectOverview({ onEditProject, onViewDiary, onViewChangeOrders }: ProjectOverviewProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -43,7 +45,8 @@ export default function ProjectOverview({ onEditProject, onViewDiary }: ProjectO
   const [sortBy, setSortBy] = useState<'name' | 'created_at' | 'status'>('created_at');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [showFilters, setShowFilters] = useState(false);
-  const [managingImagesProjectId, setManagingImagesProjectId] = useState<number | null>(null);
+  const [selectedTag, setSelectedTag] = useState('all');
+  const [managingImagesProjectId, setManagingImagesProjectId] = useState<string | null>(null);
   const [projectImages, setProjectImages] = useState<any[]>([]);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [stats, setStats] = useState({
@@ -96,7 +99,8 @@ export default function ProjectOverview({ onEditProject, onViewDiary }: ProjectO
     }
   };
 
-  const fetchProjectImages = async (projectId: number) => {
+  const fetchProjectImages = async (projectId: string | null) => {
+    if (!projectId) return;
     try {
       const res = await fetch(`/api/projects/${projectId}/images`);
       const data = await res.json();
@@ -131,7 +135,7 @@ export default function ProjectOverview({ onEditProject, onViewDiary }: ProjectO
     }
   };
 
-  const handleDeleteImage = async (imageId: number) => {
+  const handleDeleteImage = async (imageId: string) => {
     if (!confirm('Möchten Sie dieses Bild wirklich löschen?')) return;
     try {
       const res = await fetch(`/api/projects/${managingImagesProjectId}/images/${imageId}`, {
@@ -145,7 +149,7 @@ export default function ProjectOverview({ onEditProject, onViewDiary }: ProjectO
     }
   };
 
-  const handleDeleteProject = async (id: number) => {
+  const handleDeleteProject = async (id: string) => {
     if (!confirm('Möchten Sie dieses Projekt wirklich löschen?')) return;
     try {
       const res = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
@@ -159,15 +163,17 @@ export default function ProjectOverview({ onEditProject, onViewDiary }: ProjectO
 
   const filteredProjects = projects.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         p.customer_name.toLowerCase().includes(searchTerm.toLowerCase());
+                         p.customer_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         (p.tags && p.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase())));
     
     const matchesStatus = statusFilter === 'all' || p.status === statusFilter;
+    const matchesTag = selectedTag === 'all' || (p.tags && p.tags.includes(selectedTag));
     
     const projectDate = new Date(p.created_at);
     const matchesDateFrom = !dateFrom || projectDate >= new Date(dateFrom);
     const matchesDateTo = !dateTo || projectDate <= new Date(dateTo + 'T23:59:59');
 
-    return matchesSearch && matchesStatus && matchesDateFrom && matchesDateTo;
+    return matchesSearch && matchesStatus && matchesTag && matchesDateFrom && matchesDateTo;
   });
 
   const sortedProjects = [...filteredProjects].sort((a, b) => {
@@ -183,6 +189,7 @@ export default function ProjectOverview({ onEditProject, onViewDiary }: ProjectO
   });
 
   const statuses = Array.from(new Set(projects.map(p => p.status)));
+  const allTags = Array.from(new Set(projects.flatMap(p => p.tags || [])));
 
   if (loading) {
     return (
@@ -267,6 +274,18 @@ export default function ProjectOverview({ onEditProject, onViewDiary }: ProjectO
           />
         </div>
         <div className="flex gap-3 w-full md:w-auto">
+          <div className="flex bg-slate-50 rounded-2xl p-1">
+            <select 
+              value={selectedTag}
+              onChange={(e) => setSelectedTag(e.target.value)}
+              className="bg-transparent border-none outline-none px-4 py-2 text-xs font-bold text-slate-600 uppercase tracking-widest cursor-pointer"
+            >
+              <option value="all">Alle Tags</option>
+              {allTags.map(tag => (
+                <option key={tag} value={tag}>{tag}</option>
+              ))}
+            </select>
+          </div>
           <button 
             id="project-filter-toggle-btn"
             onClick={() => setShowFilters(!showFilters)}
@@ -413,7 +432,18 @@ export default function ProjectOverview({ onEditProject, onViewDiary }: ProjectO
                       <div className="w-10 h-10 bg-brand-accent rounded-xl flex items-center justify-center text-brand-primary">
                         <FileText size={20} />
                       </div>
-                      <span className="font-bold text-brand-dark">{project.name}</span>
+                      <div className="flex flex-col">
+                        <span className="font-bold text-brand-dark">{project.name}</span>
+                        {project.tags && project.tags.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {project.tags.map((tag, i) => (
+                              <span key={i} className="text-[8px] font-black uppercase tracking-tighter px-1.5 py-0.5 bg-brand-primary/10 text-brand-primary rounded">
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </td>
                   <td className="px-8 py-5">
@@ -455,6 +485,13 @@ export default function ProjectOverview({ onEditProject, onViewDiary }: ProjectO
                         title="Bautagebuch"
                       >
                         <Clock size={18} />
+                      </button>
+                      <button 
+                        onClick={() => onViewChangeOrders(project.id)}
+                        className="p-2 bg-slate-50 text-slate-400 hover:bg-brand-primary hover:text-white rounded-xl transition-all"
+                        title="Nachträge"
+                      >
+                        <FileText size={18} />
                       </button>
                       <button 
                         onClick={() => onEditProject(project.id)}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronDown, ChevronUp, Info, Clock, Euro, Search, Filter, HardHat, X, ArrowUpDown, ArrowUp, ArrowDown, Plus, ChevronRight, Upload, FileText, Pencil, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Info, Clock, Euro, Search, Filter, HardHat, X, ArrowUpDown, ArrowUp, ArrowDown, Plus, ChevronRight, Upload, FileText, Pencil, Trash2, LayoutDashboard } from 'lucide-react';
 import { Modal } from './Modal';
 
 interface ServiceItem {
@@ -10,6 +10,7 @@ interface ServiceItem {
   labor_hours: number;
   material_price: number;
   description: string;
+  group?: string;
 }
 
 interface TradeCatalog {
@@ -30,12 +31,14 @@ interface LaborRate {
 interface ServiceCatalogProps {
   onSelect?: (item: ServiceItem) => void;
   adminMode?: boolean;
+  catalog?: TradeCatalog[];
+  onUpdate?: () => void;
 }
 
-export default function ServiceCatalog({ onSelect, adminMode = false }: ServiceCatalogProps) {
-  const [catalog, setCatalog] = useState<TradeCatalog[]>([]);
+export default function ServiceCatalog({ onSelect, adminMode = false, catalog: propCatalog, onUpdate }: ServiceCatalogProps) {
+  const [catalog, setCatalog] = useState<TradeCatalog[]>(propCatalog || []);
   const [laborRates, setLaborRates] = useState<LaborRate[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!propCatalog);
   const [searchTerm, setSearchTerm] = useState('Malerarbeiten');
   const [selectedTrade, setSelectedTrade] = useState<string>('all');
   const [selectedService, setSelectedService] = useState<ServiceItem | null>(null);
@@ -46,16 +49,28 @@ export default function ServiceCatalog({ onSelect, adminMode = false }: ServiceC
     unit: 'm²',
     labor_hours: 0,
     material_price: 0,
-    description: ''
+    description: '',
+    group: ''
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [scrapeUrl, setScrapeUrl] = useState('');
+  const [isScraping, setIsScraping] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingService, setEditingService] = useState<ServiceItem & { trade_id: number } | null>(null);
-  const [sortConfig, setSortConfig] = useState<{ key: 'name' | 'labor_hours' | 'material_price' | 'tradeName' | 'unit' | null, direction: 'asc' | 'desc' }>({ key: 'name', direction: 'asc' });
+  const [sortConfig, setSortConfig] = useState<{ key: 'name' | 'labor_hours' | 'material_price' | 'tradeName' | 'unit' | 'group' | null, direction: 'asc' | 'desc' }>({ key: 'group', direction: 'asc' });
   const [isLaborRatesExpanded, setIsLaborRatesExpanded] = useState(false);
+  const [groupByLG, setGroupByLG] = useState(true);
+
+  useEffect(() => {
+    if (propCatalog) {
+      setCatalog(propCatalog);
+      setLoading(false);
+    }
+  }, [propCatalog]);
 
   const fetchData = () => {
+    if (propCatalog) return; // Use props instead
     setLoading(true);
     Promise.all([
       fetch('/api/catalog').then(res => res.json()),
@@ -136,7 +151,37 @@ export default function ServiceCatalog({ onSelect, adminMode = false }: ServiceC
 
   const trades = catalog.map(t => t.name);
 
-  const handleSort = (key: 'name' | 'labor_hours' | 'material_price' | 'tradeName' | 'unit') => {
+  const handleScrape = async () => {
+    if (!scrapeUrl) return;
+    setIsScraping(true);
+    try {
+      const response = await fetch('/api/scrape-price', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: scrapeUrl })
+      });
+      const data = await response.json();
+      if (data.success) {
+        setNewServiceData(prev => ({
+          ...prev,
+          name: data.title || prev.name,
+          material_price: data.price || prev.material_price,
+          unit: data.unit || prev.unit
+        }));
+        setShowAddModal(true);
+        setScrapeUrl('');
+      } else {
+        alert(data.message || 'Preis konnte nicht extrahiert werden.');
+      }
+    } catch (err) {
+      console.error('Scraping error:', err);
+      alert('Fehler beim Abrufen der Preisdaten.');
+    } finally {
+      setIsScraping(false);
+    }
+  };
+
+  const handleSort = (key: 'name' | 'labor_hours' | 'material_price' | 'tradeName' | 'unit' | 'group') => {
     setSortConfig(prev => ({
       key,
       direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
@@ -158,16 +203,9 @@ export default function ServiceCatalog({ onSelect, adminMode = false }: ServiceC
         })
       });
       if (response.ok) {
+        if (onUpdate) onUpdate();
+        else fetchData();
         setShowAddModal(false);
-        setNewServiceData({
-          trade_id: catalog[0]?.id.toString() || '',
-          name: '',
-          unit: 'm²',
-          labor_hours: 0,
-          material_price: 0,
-          description: ''
-        });
-        fetchData();
       }
     } catch (err) {
       console.error('Error adding service:', err);
@@ -199,6 +237,7 @@ export default function ServiceCatalog({ onSelect, adminMode = false }: ServiceC
           if (header === 'labor_hours' || header === 'zeit' || header === 'stunden') item.labor_hours = parseFloat(values[idx]) || 0;
           if (header === 'material_price' || header === 'preis' || header === 'material') item.material_price = parseFloat(values[idx]) || 0;
           if (header === 'description' || header === 'beschreibung') item.description = values[idx];
+          if (header === 'group' || header === 'leistungsgruppe') item.group = values[idx];
         });
         
         return item;
@@ -213,7 +252,8 @@ export default function ServiceCatalog({ onSelect, adminMode = false }: ServiceC
           });
           if (res.ok) {
             alert(`${items.length} Leistungen erfolgreich importiert!`);
-            fetchData();
+            if (onUpdate) onUpdate();
+            else fetchData();
           }
         } catch (err) {
           console.error('Bulk import error:', err);
@@ -244,7 +284,8 @@ export default function ServiceCatalog({ onSelect, adminMode = false }: ServiceC
       if (response.ok) {
         setShowEditModal(false);
         setEditingService(null);
-        fetchData();
+        if (onUpdate) onUpdate();
+        else fetchData();
       }
     } catch (err) {
       console.error('Error updating service:', err);
@@ -260,14 +301,15 @@ export default function ServiceCatalog({ onSelect, adminMode = false }: ServiceC
         method: 'DELETE'
       });
       if (response.ok) {
-        fetchData();
+        if (onUpdate) onUpdate();
+        else fetchData();
       }
     } catch (err) {
       console.error('Error deleting service:', err);
     }
   };
 
-  const SortIcon = ({ column }: { column: 'name' | 'labor_hours' | 'material_price' | 'tradeName' | 'unit' }) => {
+  const SortIcon = ({ column }: { column: 'name' | 'labor_hours' | 'material_price' | 'tradeName' | 'unit' | 'group' }) => {
     if (sortConfig.key !== column) return <ArrowUpDown size={14} className="opacity-20 group-hover:opacity-50 transition-opacity" />;
     return sortConfig.direction === 'asc' 
       ? <ArrowUp size={14} className="text-brand-primary animate-bounce-subtle" /> 
@@ -314,7 +356,31 @@ export default function ServiceCatalog({ onSelect, adminMode = false }: ServiceC
             <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
           </div>
           {adminMode && (
-            <>
+            <div className="flex flex-col md:flex-row gap-4 w-full md:w-auto">
+              <button 
+                onClick={() => setGroupByLG(!groupByLG)}
+                className={`px-6 py-4 rounded-2xl font-bold text-sm transition-all border flex items-center gap-2 whitespace-nowrap ${
+                  groupByLG ? 'bg-brand-accent text-brand-primary border-brand-primary/20' : 'bg-white text-slate-400 border-slate-100'
+                }`}
+              >
+                <LayoutDashboard size={18} /> {groupByLG ? 'Gruppierung an' : 'Gruppierung aus'}
+              </button>
+              <div className="flex bg-slate-50 rounded-2xl overflow-hidden border border-slate-100 focus-within:border-brand-primary/30 transition-all flex-1 md:w-64">
+                <input 
+                  type="text" 
+                  value={scrapeUrl}
+                  onChange={e => setScrapeUrl(e.target.value)}
+                  placeholder="Produkt URL (Copy & Price)"
+                  className="bg-transparent px-4 py-3 text-xs outline-none flex-1"
+                />
+                <button 
+                  onClick={handleScrape}
+                  disabled={isScraping || !scrapeUrl}
+                  className="bg-brand-secondary text-white px-4 py-3 text-[10px] font-bold uppercase tracking-widest hover:bg-brand-dark transition-all disabled:opacity-50"
+                >
+                  {isScraping ? <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div> : 'Scrape'}
+                </button>
+              </div>
               <button 
                 id="service-catalog-add-btn"
                 onClick={() => setShowAddModal(true)}
@@ -333,7 +399,7 @@ export default function ServiceCatalog({ onSelect, adminMode = false }: ServiceC
                   disabled={isImporting}
                 />
               </label>
-            </>
+            </div>
           )}
         </div>
 
@@ -365,6 +431,14 @@ export default function ServiceCatalog({ onSelect, adminMode = false }: ServiceC
                   >
                     <div className="flex items-center gap-2">
                       Gewerk <SortIcon column="tradeName" />
+                    </div>
+                  </th>
+                  <th 
+                    className="py-5 px-6 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-brand-primary transition-colors group"
+                    onClick={() => handleSort('group')}
+                  >
+                    <div className="flex items-center gap-2">
+                      Gruppe <SortIcon column="group" />
                     </div>
                   </th>
                   <th 
@@ -408,66 +482,158 @@ export default function ServiceCatalog({ onSelect, adminMode = false }: ServiceC
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {allItems.length > 0 ? (
-                  allItems.map((item) => (
-                    <tr 
-                      key={`${item.tradeName}-${item.id}`} 
-                      className="group hover:bg-brand-accent/30 transition-colors cursor-pointer"
-                      onClick={() => setSelectedService(item)}
-                    >
-                      <td className="py-4 px-6">
-                        <span className="px-3 py-1 bg-brand-accent text-brand-primary rounded-full text-[10px] font-bold uppercase tracking-wider">
-                          {item.tradeName}
-                        </span>
-                      </td>
-                      <td className="py-4 px-6">
-                        <div className="font-bold text-brand-dark group-hover:text-brand-primary transition-colors">{item.name}</div>
-                        {item.description && (
-                          <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
-                            <Info size={10} /> {item.description.substring(0, 60)}{item.description.length > 60 ? '...' : ''}
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-4 px-6 font-medium text-slate-500">{item.unit}</td>
-                      <td className="py-4 px-6">
-                        <div className="flex items-center gap-1.5 text-brand-primary font-bold">
-                          <Clock size={12} />
-                          {item.labor_hours.toFixed(2)}
-                        </div>
-                      </td>
-                      <td className="py-4 px-6">
-                        <div className="flex items-center gap-1.5 text-emerald-600 font-bold">
-                          <Euro size={12} />
-                          {item.material_price.toFixed(2)}
-                        </div>
-                      </td>
-                      {adminMode && (
-                        <td className="py-4 px-6">
-                          <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const trade = catalog.find(t => t.name === item.tradeName);
-                                setEditingService({ ...item, trade_id: trade?.id || 0 });
-                                setShowEditModal(true);
-                              }}
-                              className="p-2 text-slate-400 hover:text-brand-primary hover:bg-brand-primary/10 rounded-lg transition-all"
-                            >
-                              <Pencil size={14} />
-                            </button>
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteService(item.id);
-                              }}
-                              className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        </td>
-                      )}
-                    </tr>
-                  ))
+                  (() => {
+                    if (!groupByLG) {
+                      return allItems.map((item) => (
+                        <tr 
+                          key={`${item.tradeName}-${item.id}`} 
+                          className="group hover:bg-brand-accent/30 transition-colors cursor-pointer"
+                          onClick={() => setSelectedService(item)}
+                        >
+                          <td className="py-4 px-6">
+                            <span className="px-3 py-1 bg-brand-accent text-brand-primary rounded-full text-[10px] font-bold uppercase tracking-wider">
+                              {item.tradeName}
+                            </span>
+                          </td>
+                          <td className="py-4 px-6">
+                            <span className="text-slate-500 font-medium italic">{item.group || 'Keine Gruppe'}</span>
+                          </td>
+                          <td className="py-4 px-6">
+                            <div className="font-bold text-brand-dark group-hover:text-brand-primary transition-colors">{item.name}</div>
+                            {item.description && (
+                              <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
+                                <Info size={10} /> {item.description.substring(0, 60)}{item.description.length > 60 ? '...' : ''}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-4 px-6 font-medium text-slate-500">{item.unit}</td>
+                          <td className="py-4 px-6">
+                            <div className="flex items-center gap-1.5 text-brand-primary font-bold">
+                              <Clock size={12} />
+                              {item.labor_hours.toFixed(2)}
+                            </div>
+                          </td>
+                          <td className="py-4 px-6">
+                            <div className="flex items-center gap-1.5 text-emerald-600 font-bold">
+                              <Euro size={12} />
+                              {item.material_price.toFixed(2)}
+                            </div>
+                          </td>
+                          {adminMode && (
+                            <td className="py-4 px-6">
+                              <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const trade = catalog.find(t => t.name === item.tradeName);
+                                    setEditingService({ ...item, trade_id: trade?.id || 0 });
+                                    setShowEditModal(true);
+                                  }}
+                                  className="p-2 text-slate-400 hover:text-brand-primary hover:bg-brand-primary/10 rounded-lg transition-all"
+                                >
+                                  <Pencil size={14} />
+                                </button>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteService(item.id);
+                                  }}
+                                  className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            </td>
+                          )}
+                        </tr>
+                      ));
+                    }
+
+                    // Grouped view
+                    const groups: { [key: string]: typeof allItems } = {};
+                    allItems.forEach(item => {
+                      const g = item.group || 'Allgemein';
+                      if (!groups[g]) groups[g] = [];
+                      groups[g].push(item);
+                    });
+
+                    return Object.entries(groups).map(([groupName, groupItems]) => (
+                      <React.Fragment key={groupName}>
+                        <tr className="bg-slate-100/50">
+                          <td colSpan={adminMode ? 7 : 6} className="py-3 px-6">
+                            <div className="flex items-center gap-2">
+                              <div className="w-2 h-2 rounded-full bg-brand-primary"></div>
+                              <span className="text-xs font-black text-brand-dark uppercase tracking-widest">{groupName}</span>
+                              <span className="text-[10px] font-bold text-slate-400 ml-2">({groupItems.length} Leistungen)</span>
+                            </div>
+                          </td>
+                        </tr>
+                        {groupItems.map((item) => (
+                          <tr 
+                            key={`${item.tradeName}-${item.id}`} 
+                            className="group hover:bg-brand-accent/30 transition-colors cursor-pointer"
+                            onClick={() => setSelectedService(item)}
+                          >
+                            <td className="py-4 px-6">
+                              <span className="px-3 py-1 bg-brand-accent text-brand-primary rounded-full text-[10px] font-bold uppercase tracking-wider">
+                                {item.tradeName}
+                              </span>
+                            </td>
+                            <td className="py-4 px-6">
+                              <span className="text-slate-400 text-xs">{item.group || '-'}</span>
+                            </td>
+                            <td className="py-4 px-6">
+                              <div className="font-bold text-brand-dark group-hover:text-brand-primary transition-colors">{item.name}</div>
+                              {item.description && (
+                                <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
+                                  <Info size={10} /> {item.description.substring(0, 60)}{item.description.length > 60 ? '...' : ''}
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-4 px-6 font-medium text-slate-500">{item.unit}</td>
+                            <td className="py-4 px-6">
+                              <div className="flex items-center gap-1.5 text-brand-primary font-bold">
+                                <Clock size={12} />
+                                {item.labor_hours.toFixed(2)}
+                              </div>
+                            </td>
+                            <td className="py-4 px-6">
+                              <div className="flex items-center gap-1.5 text-emerald-600 font-bold">
+                                <Euro size={12} />
+                                {item.material_price.toFixed(2)}
+                              </div>
+                            </td>
+                            {adminMode && (
+                              <td className="py-4 px-6">
+                                <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button 
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const trade = catalog.find(t => t.name === item.tradeName);
+                                      setEditingService({ ...item, trade_id: trade?.id || 0 });
+                                      setShowEditModal(true);
+                                    }}
+                                    className="p-2 text-slate-400 hover:text-brand-primary hover:bg-brand-primary/10 rounded-lg transition-all"
+                                  >
+                                    <Pencil size={14} />
+                                  </button>
+                                  <button 
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteService(item.id);
+                                    }}
+                                    className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                      </React.Fragment>
+                    ));
+                  })()
                 ) : (
                   <tr>
                     <td colSpan={5} className="py-20 text-center text-slate-400 italic">
@@ -582,6 +748,17 @@ export default function ServiceCatalog({ onSelect, adminMode = false }: ServiceC
             </div>
 
             <div className="md:col-span-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2 ml-1">Leistungsgruppe</label>
+              <input 
+                type="text"
+                value={editingService?.group || ''}
+                onChange={e => setEditingService(prev => prev ? {...prev, group: e.target.value} : null)}
+                placeholder="z.B. Vorbereitung, Hauptleistung, Abschluss"
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all font-medium"
+              />
+            </div>
+
+            <div className="md:col-span-2">
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2 ml-1">Name der Leistung</label>
               <input 
                 required
@@ -686,6 +863,17 @@ export default function ServiceCatalog({ onSelect, adminMode = false }: ServiceC
             </div>
 
             <div className="md:col-span-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2 ml-1">Leistungsgruppe</label>
+              <input 
+                type="text"
+                value={newServiceData.group}
+                onChange={e => setNewServiceData({...newServiceData, group: e.target.value})}
+                placeholder="z.B. Vorbereitung, Hauptleistung, Abschluss"
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all font-medium"
+              />
+            </div>
+
+            <div className="md:col-span-2">
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2 ml-1">Name der Leistung</label>
               <input 
                 required
@@ -781,6 +969,10 @@ export default function ServiceCatalog({ onSelect, adminMode = false }: ServiceC
             </div>
 
             <div className="grid grid-cols-2 gap-6">
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 col-span-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Leistungsgruppe</label>
+                <span className="text-lg font-black text-brand-dark">{selectedService.group || 'Allgemein'}</span>
+              </div>
               <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Einheit</label>
                 <span className="text-lg font-black text-brand-dark">{selectedService.unit}</span>
