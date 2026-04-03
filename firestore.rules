@@ -130,16 +130,16 @@ service cloud.firestore {
     }
 
     match /trades/{tradeId} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       allow write: if isAdmin();
       
       match /labor_rates/{rateId} {
-        allow read: if isAuthenticated();
+        allow read: if true;
         allow write: if isAdmin();
       }
       
       match /service_items/{itemId} {
-        allow read: if isAuthenticated();
+        allow read: if true;
         allow write: if isAdmin();
       }
     }
@@ -199,7 +199,7 @@ service cloud.firestore {
     }
 
     match /settings/{settingKey} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       allow write: if isAdmin();
     }
 

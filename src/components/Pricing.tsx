@@ -3,10 +3,12 @@ import { motion } from 'motion/react';
 import { Check, Zap, Shield, Star, ArrowRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../App';
+import { useUI } from './UIContext';
 
 const Pricing = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { showNotification } = useUI();
 
   const plans = [
     {
@@ -88,11 +90,11 @@ const Pricing = () => {
       if (data.success && data.url) {
         window.location.href = data.url;
       } else {
-        alert(data.message || 'Fehler beim Starten des Upgrades.');
+        showNotification(data.message || 'Fehler beim Starten des Upgrades.', 'error');
       }
     } catch (err) {
       console.error('Upgrade Error:', err);
-      alert('Ein Fehler ist aufgetreten.');
+      showNotification('Ein Fehler ist aufgetreten.', 'error');
     }
   };
 

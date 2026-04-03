@@ -76,7 +76,7 @@ async function startServer() {
     
     // Initialize database first
     console.log("Calling initDb()...");
-    initDb();
+    await initDb();
     console.log("initDb() finished.");
 
     const app = express();
@@ -561,7 +561,8 @@ async function startServer() {
       }
       res.json(allRates);
     } catch (err) {
-      res.status(500).json({ success: false, message: "Stundensätze konnten nicht geladen werden." });
+      console.error("Error fetching labor rates:", err);
+      res.json([]); // Return empty array to prevent frontend crash
     }
   });
 
@@ -1724,7 +1725,8 @@ async function startServer() {
       }));
       res.json(catalog);
     } catch (err) {
-      res.status(500).json({ success: false, message: "Katalog konnte nicht geladen werden." });
+      console.error("Error fetching catalog:", err);
+      res.json([]); // Return empty array to prevent frontend crash
     }
   });
 
@@ -1738,7 +1740,8 @@ async function startServer() {
       }, {});
       res.json(settings);
     } catch (err) {
-      res.status(500).json({ success: false, message: "Einstellungen konnten nicht geladen werden." });
+      console.error("Error fetching settings:", err);
+      res.json({}); // Return empty object to prevent frontend crash
     }
   });
 

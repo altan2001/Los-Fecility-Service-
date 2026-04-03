@@ -45,6 +45,7 @@ import LiveCalculator from './components/LiveCalculator';
 import ServiceCatalog from './components/ServiceCatalog';
 import QuoteBuilder from './components/QuoteBuilder';
 import Pricing from './components/Pricing';
+import { UIProvider, useUI } from './components/UIContext';
 
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
@@ -240,23 +241,25 @@ export default function App() {
   }, []);
 
   return (
-    <AuthProvider>
-      <Router>
-        {customCss && <style dangerouslySetInnerHTML={{ __html: customCss }} />}
-        <Routes>
-          <Route path="/admin" element={<Admin activeTabDefault="quotes" />} />
-          <Route path="/pricing" element={<Pricing />} />
-          <Route path="/admin/quotes" element={<Admin activeTabDefault="quotes" />} />
-          <Route path="/admin/rates" element={<Admin activeTabDefault="rates" />} />
-          <Route path="/impressum" element={<LegalPage title="Impressum" content={<ImpressumContent />} />} />
-          <Route path="/datenschutz" element={<LegalPage title="Datenschutz" content={<DatenschutzContent />} />} />
-          <Route path="/agb" element={<LegalPage title="AGB" content={<AGBContent />} />} />
-          <Route path="/forgot-password" element={<ForgotPassword />} />
-          <Route path="/reset-password" element={<ResetPassword />} />
-          <Route path="/" element={<MainSite />} />
-        </Routes>
-      </Router>
-    </AuthProvider>
+    <UIProvider>
+      <AuthProvider>
+        <Router>
+          {customCss && <style dangerouslySetInnerHTML={{ __html: customCss }} />}
+          <Routes>
+            <Route path="/admin" element={<Admin activeTabDefault="quotes" />} />
+            <Route path="/pricing" element={<Pricing />} />
+            <Route path="/admin/quotes" element={<Admin activeTabDefault="quotes" />} />
+            <Route path="/admin/rates" element={<Admin activeTabDefault="rates" />} />
+            <Route path="/impressum" element={<LegalPage title="Impressum" content={<ImpressumContent />} />} />
+            <Route path="/datenschutz" element={<LegalPage title="Datenschutz" content={<DatenschutzContent />} />} />
+            <Route path="/agb" element={<LegalPage title="AGB" content={<AGBContent />} />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/" element={<MainSite />} />
+          </Routes>
+        </Router>
+      </AuthProvider>
+    </UIProvider>
   );
 }
 
@@ -446,6 +449,7 @@ function ResetPassword() {
 function MainSite() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const { user, isAdmin, handleLogin: authLogin, handleLogout: authLogout, refreshUser } = useAuth();
+  const { showNotification } = useUI();
   const [content, setContent] = useState<ContentMap>({});
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [contactForm, setContactForm] = useState({ firstName: '', lastName: '', email: '', message: '' });
@@ -590,7 +594,7 @@ function MainSite() {
       });
       const data = await res.json();
       if (data.success) {
-        alert(data.message);
+        showNotification(data.message, 'success');
         setNewsletterEmail('');
       }
     } catch (err) {
@@ -655,8 +659,7 @@ function MainSite() {
 
                 <form className="space-y-4" onSubmit={(e) => {
                   e.preventDefault();
-                  // For demo purposes, we'll just show an alert
-                  alert('E-Mail-Login ist in dieser Demo nur für Google-Konten vorkonfiguriert. Bitte nutzen Sie Google Login.');
+                  showNotification('E-Mail-Login ist in dieser Demo nur für Google-Konten vorkonfiguriert. Bitte nutzen Sie Google Login.', 'info');
                 }}>
                   <Input label="E-Mail" placeholder="ihre@email.de" type="email" required />
                   <Input label="Passwort" placeholder="••••••••" type="password" required />

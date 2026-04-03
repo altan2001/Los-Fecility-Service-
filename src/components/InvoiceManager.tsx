@@ -14,6 +14,7 @@ import {
   Info
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { useUI } from './UIContext';
 
 interface Project {
   id: string;
@@ -34,6 +35,7 @@ interface Invoice {
 }
 
 export default function InvoiceManager() {
+  const { showNotification } = useUI();
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -170,16 +172,16 @@ export default function InvoiceManager() {
       });
       const data = await res.json();
       if (res.ok) {
-        alert(data.message);
+        showNotification(data.message, 'success');
         setShowReminderModal(false);
         setSelectedInvoiceForReminder(null);
         setCustomReminderMessage('');
       } else {
-        alert(data.message || 'Fehler beim Senden der Mahnung');
+        showNotification(data.message || 'Fehler beim Senden der Mahnung', 'error');
       }
     } catch (err) {
       console.error('Error sending reminder:', err);
-      alert('Fehler beim Senden der Mahnung');
+      showNotification('Fehler beim Senden der Mahnung', 'error');
     } finally {
       setLoading(false);
     }
