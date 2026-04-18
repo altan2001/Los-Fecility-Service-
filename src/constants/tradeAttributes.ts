@@ -119,5 +119,36 @@ export const PILOT_TRADE_ATTRIBUTES: Record<string, TradeAttributeDefinition[]> 
       label: 'Vorwandsystem erforderlich',
       type: 'boolean'
     }
+  ],
+  'Garten- & Landschaftsbau': [
+    {
+      id: 'bodenklasse',
+      label: 'Bodenklasse (DIN 18300)',
+      type: 'select',
+      options: ['Klasse 1-2 (Oberboden)', 'Klasse 3-4 (Leicht/Mittelschwer)', 'Klasse 5 (Schwer)', 'Klasse 6-7 (Fels)']
+    },
+    {
+      id: 'pflasterart',
+      label: 'Pflaster- / Plattenart',
+      type: 'select',
+      options: ['Betonstein', 'Naturstein (Granit)', 'Naturstein (Basalt)', 'Keramikplatten', 'Klinker']
+    },
+    {
+      id: 'verlegeart',
+      label: 'Verlegeart',
+      type: 'select',
+      options: ['Ungebundene Bauweise (Splitt)', 'Gebundene Bauweise (Mörtel)', 'Stelzlager']
+    },
+    {
+      id: 'entwaesserung',
+      label: 'Entwässerung / Gefälle erforderlich',
+      type: 'boolean'
+    },
+    {
+      id: 'pflanzqualitaet',
+      label: 'Pflanzqualität',
+      type: 'select',
+      options: ['Standard (Baumarkt)', 'Baumschule (Güteklasse A)', 'Solitärpflanzen']
+    }
   ]
 };

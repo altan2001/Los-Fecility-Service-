@@ -1017,6 +1017,15 @@ async function startServer() {
 
       await transporter.sendMail(mailOptions);
 
+      // Add Audit Log
+      await addDoc(collection(firestore, "audit_logs"), {
+        entity_type: 'invoice',
+        entity_id: invoiceId,
+        action: 'reminder_sent',
+        details: `Zahlungserinnerung für ${invoice.invoice_number} gesendet`,
+        timestamp: new Date().toISOString()
+      });
+
       // Log the communication
       if (project.customer_id) {
         await addDoc(collection(firestore, `customers/${project.customer_id}/communication_logs`), {
@@ -1030,6 +1039,24 @@ async function startServer() {
     } catch (err) {
       console.error("Error sending reminder:", err);
       res.status(500).json({ success: false, message: "Fehler beim Senden der Erinnerung." });
+    }
+  });
+
+  app.get("/api/audit-logs/:entityType/:entityId", async (req, res) => {
+    const { entityType, entityId } = req.params;
+    try {
+      const q = query(
+        collection(firestore, "audit_logs"), 
+        where("entity_type", "==", entityType),
+        where("entity_id", "==", entityId),
+        orderBy("timestamp", "desc")
+      );
+      const snapshot = await getDocs(q);
+      const logs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      res.json(logs);
+    } catch (err) {
+      console.error("Error fetching audit logs:", err);
+      res.json([]);
     }
   });
 
@@ -1083,14 +1110,25 @@ async function startServer() {
     const { invoice_number, type, amount, status, due_date } = req.body;
     try {
       const docRef = doc(collection(firestore, `projects/${id}/invoices`));
-      await setDoc(docRef, {
+      const invoiceData = {
         invoice_number,
         type,
         amount: parseFloat(amount) || 0,
         status: status || 'draft',
         due_date,
         created_at: new Date().toISOString()
+      };
+      await setDoc(docRef, invoiceData);
+
+      // Add Audit Log
+      await addDoc(collection(firestore, "audit_logs"), {
+        entity_type: 'invoice',
+        entity_id: docRef.id,
+        action: 'created',
+        details: `Rechnung ${invoice_number} erstellt`,
+        timestamp: new Date().toISOString()
       });
+
       res.json({ success: true, id: docRef.id });
     } catch (err) {
       res.status(500).json({ success: false, message: "Rechnung konnte nicht erstellt werden." });
@@ -1146,6 +1184,70 @@ async function startServer() {
     }
   });
 
+  app.get("/api/projects/:projectId/progress-summary", async (req, res) => {
+    const { projectId } = req.params;
+    try {
+      const projectDoc = await getDoc(doc(firestore, "projects", projectId));
+      if (!projectDoc.exists()) return res.status(404).json({ success: false, message: "Projekt nicht gefunden." });
+      const project = projectDoc.data();
+
+      const itemsSnapshot = await getDocs(collection(firestore, `projects/${projectId}/items`));
+      const items = itemsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      let totalNet = 0;
+      let completedNet = 0;
+
+      items.forEach((item: any) => {
+        const laborMarkup = 1 + (project.labor_markup || 0) / 100;
+        const materialMarkup = 1 + (project.material_markup || 0) / 100;
+
+        let itemLabor = 0;
+        if (item.labor_components && Array.isArray(item.labor_components)) {
+          itemLabor = item.labor_components.reduce((sum: number, comp: any) => {
+            return sum + (comp.hourly_rate * comp.time_value * comp.quantity);
+          }, 0);
+        } else {
+          itemLabor = (item.labor_hours_per_unit || 0) * (item.quantity || 0) * 52; // Fallback rate
+        }
+
+        const itemMaterial = (item.material_price_per_unit || 0) * (item.quantity || 0);
+        
+        const itemTotalNet = (itemLabor * laborMarkup) + (itemMaterial * materialMarkup);
+        const completion = (item.completion || 0) / 100;
+
+        totalNet += itemTotalNet;
+        completedNet += itemTotalNet * completion;
+      });
+
+      // Also fetch already invoiced amounts
+      const invoicesSnapshot = await getDocs(collection(firestore, `projects/${projectId}/invoices`));
+      const invoicedTotal = invoicesSnapshot.docs.reduce((sum, doc) => {
+        const inv = doc.data();
+        if (inv.status !== 'draft') {
+          return sum + (inv.amount || 0);
+        }
+        return sum;
+      }, 0);
+
+      const taxRate = project.tax_rate || 19.0;
+      const completedGross = completedNet * (1 + taxRate / 100);
+      const remainingToInvoice = Math.max(0, completedGross - invoicedTotal);
+
+      res.json({
+        success: true,
+        totalNet,
+        completedNet,
+        completedGross,
+        invoicedTotal,
+        remainingToInvoice,
+        taxRate
+      });
+    } catch (err) {
+      console.error("Error fetching progress summary:", err);
+      res.status(500).json({ success: false, message: "Fortschritt konnte nicht berechnet werden." });
+    }
+  });
+
   app.get("/api/projects/:projectId/invoices/:invoiceId/export-xrechnung", async (req, res) => {
     const { projectId, invoiceId } = req.params;
     try {
@@ -1175,6 +1277,20 @@ async function startServer() {
 
       const itemsSnapshot = await getDocs(collection(firestore, `projects/${projectId}/quote_items`));
       const items = itemsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      // Fetch all invoices for this project to calculate deductions if it's a Schlussrechnung
+      const invoicesSnapshot = await getDocs(collection(firestore, `projects/${projectId}/invoices`));
+      const allInvoices = invoicesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      let deductions = 0;
+      if (invoice.type === 'Schlussrechnung') {
+        deductions = allInvoices.reduce((sum, inv: any) => {
+          if (inv.id !== invoiceId && inv.type === 'Abschlagsrechnung' && inv.status === 'paid') {
+            return sum + (inv.amount || 0);
+          }
+          return sum;
+        }, 0);
+      }
 
       const taxRate = project.tax_rate || 19.0;
       const netAmount = invoice.amount / (1 + taxRate / 100);
@@ -1241,7 +1357,8 @@ async function startServer() {
             .ele('cbc:LineExtensionAmount', { currencyID: project.currency || 'EUR' }).txt(netAmount.toFixed(2)).up()
             .ele('cbc:TaxExclusiveAmount', { currencyID: project.currency || 'EUR' }).txt(netAmount.toFixed(2)).up()
             .ele('cbc:TaxInclusiveAmount', { currencyID: project.currency || 'EUR' }).txt(invoice.amount.toFixed(2)).up()
-            .ele('cbc:PayableAmount', { currencyID: project.currency || 'EUR' }).txt(invoice.amount.toFixed(2)).up()
+            .ele('cbc:PrepaidAmount', { currencyID: project.currency || 'EUR' }).txt(deductions.toFixed(2)).up()
+            .ele('cbc:PayableAmount', { currencyID: project.currency || 'EUR' }).txt((invoice.amount - deductions).toFixed(2)).up()
           .up();
 
       // Add detailed line items
@@ -1536,6 +1653,63 @@ async function startServer() {
   });
 
   // --- AI & External Services ---
+  app.post("/api/ai/optimize-text", async (req, res) => {
+    const { text, context } = req.body;
+    if (!text) return res.status(400).json({ success: false, message: "Kein Text angegeben." });
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [{
+          parts: [{
+            text: `Optimiere den folgenden Text für ein professionelles Handwerker-Angebot im Bereich ${context || 'Bauwesen'}. Der Text soll präzise, fachlich korrekt und kundenorientiert auf Deutsch sein. Behalte die Kernaussage bei.\n\nText: ${text}`
+          }]
+        }]
+      });
+
+      res.json({ success: true, optimizedText: response.text });
+    } catch (err) {
+      console.error("AI Text Optimization Error:", err);
+      res.status(500).json({ success: false, message: "Fehler bei der KI-Textoptimierung." });
+    }
+  });
+
+  app.post("/api/ai/suggest-calculation", async (req, res) => {
+    const { description, trade } = req.body;
+    if (!description) return res.status(400).json({ success: false, message: "Keine Beschreibung angegeben." });
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [{
+          parts: [{
+            text: `Schlage eine Kalkulation für folgende Handwerksleistung vor: "${description}". Gewerk: ${trade || 'Allgemein'}. 
+            Gib das Ergebnis als JSON-Objekt zurück mit folgenden Feldern:
+            - title: Kurzer Titel
+            - unit: Einheit (z.B. m2, lfm, Stk)
+            - material_cost: Geschätzte Materialkosten pro Einheit in EUR
+            - labor_hours: Geschätzte Arbeitsstunden pro Einheit
+            - description: Ausführliche Leistungsbeschreibung
+            Antworte NUR mit dem JSON-Objekt.`
+          }]
+        }]
+      });
+
+      const text = response.text;
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        res.json({ success: true, suggestion: JSON.parse(jsonMatch[0]) });
+      } else {
+        res.status(500).json({ success: false, message: "KI konnte kein gültiges JSON generieren." });
+      }
+    } catch (err) {
+      console.error("AI Suggest Calculation Error:", err);
+      res.status(500).json({ success: false, message: "Fehler bei der KI-Kalkulationsberatung." });
+    }
+  });
+
   app.post("/api/ai/analyze-photo", upload.single('file'), async (req, res) => {
     if (!req.file) return res.status(400).json({ success: false, message: "No file uploaded" });
 
@@ -1568,6 +1742,212 @@ async function startServer() {
       console.error("AI Photo Analysis Error:", err);
       res.status(500).json({ success: false, message: "Fehler bei der KI-Fotoanalyse." });
     }
+  });
+
+  // --- Wholesaler Integration (Modul 4) ---
+
+  const wholesalers = [
+    { id: 'gc', name: 'GC-Gruppe (Sanitär/Heizung)', loginUrl: 'https://www.gc-online-plus.de/ids/login', type: 'IDS' },
+    { id: 'rf', name: 'Richter+Frenzel', loginUrl: 'https://www.rf-online.de/ids/login', type: 'IDS' },
+    { id: 'sonepar', name: 'Sonepar (Elektro)', loginUrl: 'https://www.sonepar.de/ids/login', type: 'IDS' },
+    { id: 'hagebau', name: 'hagebau Profi', loginUrl: 'https://www.hagebau-profi.de/ids/login', type: 'IDS' }
+  ];
+
+  // --- Customer Portal API ---
+
+  app.get("/api/customer/projects", async (req, res) => {
+    const { email } = req.query;
+    if (!email) return res.status(400).json({ success: false, message: "Email required" });
+
+    try {
+      const snapshot = await getDocs(query(
+        collection(firestore, "projects"), 
+        where("customer_email", "==", email),
+        orderBy("created_at", "desc")
+      ));
+      
+      const projects = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      res.json({ success: true, projects });
+    } catch (err) {
+      console.error("Error fetching customer projects:", err);
+      res.status(500).json({ success: false, message: "Projekte konnten nicht geladen werden." });
+    }
+  });
+
+  app.post("/api/projects/:id/sign", async (req, res) => {
+    const { id } = req.params;
+    const { signatureData, signedBy } = req.body;
+    try {
+      await updateDoc(doc(firestore, "projects", id), {
+        status: 'Beauftragt',
+        signed_at: new Date().toISOString(),
+        signed_by: signedBy,
+        signature_data: signatureData
+      });
+
+      // Add audit log
+      await addDoc(collection(firestore, "audit_logs"), {
+        entity_type: 'project',
+        entity_id: id,
+        action: 'SIGNED',
+        user_id: signedBy,
+        timestamp: new Date().toISOString(),
+        details: `Angebot digital unterschrieben von ${signedBy}`
+      });
+
+      res.json({ success: true, message: "Angebot erfolgreich unterschrieben!" });
+    } catch (err) {
+      console.error("Error signing project:", err);
+      res.status(500).json({ success: false, message: "Unterschrift fehlgeschlagen." });
+    }
+  });
+
+  app.get("/api/customer/diaries/:projectId", async (req, res) => {
+    const { projectId } = req.params;
+    try {
+      const snapshot = await getDocs(query(
+        collection(firestore, `projects/${projectId}/diaries`),
+        orderBy("date", "desc")
+      ));
+      const diaries = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      res.json({ success: true, diaries });
+    } catch (err) {
+      console.error("Error fetching project diaries:", err);
+      res.status(500).json({ success: false, message: "Bautagebuch konnte nicht geladen werden." });
+    }
+  });
+
+  app.get("/api/wholesalers", (req, res) => {
+    res.json(wholesalers);
+  });
+
+  app.post("/api/wholesalers/ids-login", (req, res) => {
+    const { wholesalerId, projectId } = req.body;
+    const wholesaler = wholesalers.find(w => w.id === wholesalerId);
+    
+    if (!wholesaler) {
+      return res.status(404).json({ success: false, message: "Großhändler nicht gefunden." });
+    }
+
+    // In a real scenario, we would generate a unique session/token
+    // For this demo, we use the projectId as a reference
+    const hookUrl = `${req.protocol}://${req.get('host')}/api/wholesalers/ids-receive?projectId=${projectId}`;
+    
+    // IDS-Connect parameters
+    const params = {
+      'HOOK_URL': hookUrl,
+      'RETURNTARGET': '_top',
+      'IDS_VERSION': '2.0',
+      // Optional: User credentials if stored
+    };
+
+    res.json({ 
+      success: true, 
+      url: wholesaler.loginUrl,
+      params
+    });
+  });
+
+  // IDS-Receive Hook
+  // Wholesalers send a POST request with the cart data
+  app.post("/api/wholesalers/ids-receive", upload.any(), async (req, res) => {
+    const { projectId } = req.query;
+    console.log("IDS-Receive triggered for project:", projectId);
+    
+    // The data is usually in req.body or as a file
+    // Common fields: 'IDS_DATA' (XML) or a file upload
+    let xmlData = req.body.IDS_DATA;
+    
+    if (!xmlData && req.files && (req.files as any[]).length > 0) {
+      const file = (req.files as any[])[0];
+      xmlData = fs.readFileSync(file.path, 'utf-8');
+    }
+
+    if (!xmlData) {
+      return res.status(400).send("Keine Daten empfangen.");
+    }
+
+    try {
+      const parser = new Parser({ explicitArray: false });
+      const result = await parser.parseStringPromise(xmlData);
+      
+      // Parse IDS XML (Simplified example)
+      // Real IDS XML structure varies but usually has line items
+      const items = [];
+      const rawItems = result?.IDS?.ORDER_ITEM || result?.ORDER?.ORDER_ITEM || [];
+      const itemsArray = Array.isArray(rawItems) ? rawItems : [rawItems];
+
+      for (const item of itemsArray) {
+        items.push({
+          name: item.DESCRIPTION || item.ARTICLE_NAME || "Unbekannter Artikel",
+          sku: item.ARTICLE_ID || item.SKU || "",
+          price: parseFloat(item.PRICE || item.UNIT_PRICE || "0"),
+          unit: item.UNIT || "Stk",
+          quantity: parseFloat(item.QUANTITY || "1"),
+          brand: item.MANUFACTURER || ""
+        });
+      }
+
+      // Store the imported items in Firestore for the project
+      if (projectId) {
+        const batch = writeBatch(firestore);
+        for (const item of items) {
+          const docRef = doc(collection(firestore, `projects/${projectId}/quote_items`));
+          await setDoc(docRef, {
+            project_id: projectId,
+            name: item.name,
+            description: `Importiert von Großhandel. Art-Nr: ${item.sku}`,
+            unit: item.unit,
+            quantity: item.quantity,
+            material_price_per_unit: item.price,
+            labor_hours_per_unit: 0, // Manual adjustment needed
+            trade_id: 'general', // Default
+            created_at: new Date().toISOString()
+          });
+        }
+      }
+
+      // Redirect user back to the project page
+      res.send(`
+        <html>
+          <body>
+            <script>
+              window.opener?.postMessage({ type: 'IDS_IMPORT_SUCCESS', projectId: '${projectId}' }, '*');
+              window.close();
+              // Fallback if not a popup
+              window.location.href = '/projects/${projectId}?import=success';
+            </script>
+            <h2>Import erfolgreich!</h2>
+            <p>Die Artikel wurden zu Ihrem Projekt hinzugefügt. Sie können dieses Fenster nun schließen.</p>
+          </body>
+        </html>
+      `);
+    } catch (err) {
+      console.error("IDS Parse Error:", err);
+      res.status(500).send("Fehler beim Verarbeiten der Großhändler-Daten.");
+    }
+  });
+
+  app.get("/api/wholesaler/search", async (req, res) => {
+    const { q, wholesaler } = req.query;
+    // Mock data for demonstration
+    const mockItems = [
+      { id: 'wh-1', name: 'Wandfarbe Premium Weiß 10L', price: 45.90, unit: 'Eimer', brand: 'Alpina', sku: 'AL-12345' },
+      { id: 'wh-2', name: 'Tiefgrund Konzentrat 5L', price: 22.50, unit: 'Kanister', brand: 'Knauf', sku: 'KN-67890' },
+      { id: 'wh-3', name: 'Abdeckfolie Extra Stark 20m2', price: 8.95, unit: 'Rolle', brand: 'Tesa', sku: 'TE-55443' },
+      { id: 'wh-4', name: 'Fliesenkleber Flex 25kg', price: 29.90, unit: 'Sack', brand: 'PCI', sku: 'PC-11223' },
+      { id: 'wh-5', name: 'Kupferrohr 15mm 2,5m', price: 18.20, unit: 'Stange', brand: 'Viega', sku: 'VI-99887' },
+    ];
+
+    const filtered = mockItems.filter(item => 
+      item.name.toLowerCase().includes((q as string || '').toLowerCase()) ||
+      item.brand.toLowerCase().includes((q as string || '').toLowerCase())
+    );
+
+    // Simulate network delay
+    setTimeout(() => {
+      res.json(filtered);
+    }, 500);
   });
 
   app.post("/api/catalog/import-datanorm", upload.single('file'), async (req, res) => {
@@ -1991,7 +2371,7 @@ async function startServer() {
   });
 
   app.post("/api/projects", async (req, res) => {
-    const { userId, name, customer_id, customer_name, customer_address, currency, tax_rate, craftsman_name, craftsman_contact, terms_and_conditions, project_manager, tags } = req.body;
+    const { userId, name, customer_id, customer_name, customer_email, customer_address, currency, tax_rate, craftsman_name, craftsman_contact, terms_and_conditions, project_manager, tags } = req.body;
     try {
       // Check if paid offers are enabled
       const settingsDoc = await getDoc(doc(firestore, "settings", "paid_offers_enabled"));
@@ -2028,6 +2408,7 @@ async function startServer() {
         name,
         customer_id: customer_id || null,
         customer_name: customer_name || '',
+        customer_email: customer_email || '',
         customer_address: customer_address || '',
         currency: currency || 'EUR',
         tax_rate: tax_rate || 19.0,
@@ -2602,6 +2983,7 @@ async function startServer() {
   app.get("/api/invoices/:id/export-zugferd", async (req, res) => {
     const { id } = req.params;
     try {
+      const { create } = await import('xmlbuilder2');
       const invoiceDoc = await getDoc(doc(firestore, "invoices", id));
       if (!invoiceDoc.exists()) return res.status(404).send("Rechnung nicht gefunden");
       const invoice = { id: invoiceDoc.id, ...invoiceDoc.data() } as any;
@@ -2622,76 +3004,115 @@ async function startServer() {
         return acc;
       }, {});
 
-      // Simple ZUGFeRD-like XML structure (Simplified for demo)
-      const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<rsm:CrossIndustryInvoice xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100" xmlns:ram="urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100" xmlns:udt="urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100">
-  <rsm:ExchangedDocumentContext>
-    <ram:GuidelineSpecifiedDocumentContextParameter>
-      <ram:ID>urn:cen.eu:en16931:2017#compliant#urn:zugferd.de:2p0:basic</ram:ID>
-    </ram:GuidelineSpecifiedDocumentContextParameter>
-  </rsm:ExchangedDocumentContext>
-  <rsm:ExchangedDocument>
-    <ram:ID>${invoice.invoice_number}</ram:ID>
-    <ram:TypeCode>380</ram:TypeCode>
-    <ram:IssueDateTime>
-      <udt:DateTimeString format="102">${new Date(invoice.created_at).toISOString().split('T')[0].replace(/-/g, '')}</udt:DateTimeString>
-    </ram:IssueDateTime>
-  </rsm:ExchangedDocument>
-  <rsm:SupplyChainTradeTransaction>
-    <ram:ApplicableHeaderTradeAgreement>
-      <ram:SellerTradeParty>
-        <ram:Name>${settings.company_name || 'KI-Handwerker GmbH'}</ram:Name>
-        <ram:PostalTradeAddress>
-          <ram:LineOne>${settings.company_address || ''}</ram:LineOne>
-          <ram:CountryID>DE</ram:CountryID>
-        </ram:PostalTradeAddress>
-        <ram:SpecifiedTaxRegistration>
-          <ram:ID schemeID="VA">${settings.company_vat_id || ''}</ram:ID>
-        </ram:SpecifiedTaxRegistration>
-      </ram:SellerTradeParty>
-      <ram:BuyerTradeParty>
-        <ram:Name>${customer?.name || project.customer_name}</ram:Name>
-        <ram:PostalTradeAddress>
-          <ram:LineOne>${customer?.address || project.customer_address}</ram:LineOne>
-          <ram:CountryID>DE</ram:CountryID>
-        </ram:PostalTradeAddress>
-      </ram:BuyerTradeParty>
-    </ram:ApplicableHeaderTradeAgreement>
-    <ram:ApplicableHeaderTradeDelivery>
-      <ram:ActualDeliverySupplyChainEvent>
-        <ram:OccurrenceDateTime>
-          <udt:DateTimeString format="102">${new Date(invoice.created_at).toISOString().split('T')[0].replace(/-/g, '')}</udt:DateTimeString>
-        </ram:OccurrenceDateTime>
-      </ram:ActualDeliverySupplyChainEvent>
-    </ram:ApplicableHeaderTradeDelivery>
-    <ram:ApplicableHeaderTradeSettlement>
-      <ram:InvoiceCurrencyCode>EUR</ram:InvoiceCurrencyCode>
-      <ram:SpecifiedTradeSettlementPaymentMeans>
-        <ram:TypeCode>42</ram:TypeCode>
-        <ram:PayeePartyCreditorFinancialAccount>
-          <ram:IBANID>${settings.company_iban || ''}</ram:IBANID>
-        </ram:PayeePartyCreditorFinancialAccount>
-      </ram:SpecifiedTradeSettlementPaymentMeans>
-      <ram:ApplicableTradeTax>
-        <ram:CalculatedAmount>${(invoice.amount * 0.19).toFixed(2)}</ram:CalculatedAmount>
-        <ram:BasisAmount>${invoice.amount.toFixed(2)}</ram:BasisAmount>
-        <ram:CategoryCode>S</ram:CategoryCode>
-        <ram:RateApplicablePercent>19.00</ram:RateApplicablePercent>
-      </ram:ApplicableTradeTax>
-      <ram:SpecifiedTradeSettlementMonetarySummation>
-        <ram:LineTotalAmount>${invoice.amount.toFixed(2)}</ram:LineTotalAmount>
-        <ram:TaxBasisTotalAmount>${invoice.amount.toFixed(2)}</ram:TaxBasisTotalAmount>
-        <ram:TaxTotalAmount currencyID="EUR">${(invoice.amount * 0.19).toFixed(2)}</ram:TaxTotalAmount>
-        <ram:GrandTotalAmount>${(invoice.amount * 1.19).toFixed(2)}</ram:GrandTotalAmount>
-        <ram:DuePayableAmount>${(invoice.amount * 1.19).toFixed(2)}</ram:DuePayableAmount>
-      </ram:SpecifiedTradeSettlementMonetarySummation>
-    </ram:ApplicableHeaderTradeSettlement>
-  </rsm:SupplyChainTradeTransaction>
-</rsm:CrossIndustryInvoice>`;
+      const taxRate = project.tax_rate || 19.0;
+      const netAmount = invoice.amount / (1 + taxRate / 100);
+      const taxAmount = invoice.amount - netAmount;
+
+      const root = create({ version: '1.0', encoding: 'UTF-8' })
+        .ele('rsm:CrossIndustryInvoice', {
+          'xmlns:rsm': 'urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100',
+          'xmlns:ram': 'urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100',
+          'xmlns:udt': 'urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100'
+        })
+          .ele('rsm:ExchangedDocumentContext')
+            .ele('ram:GuidelineSpecifiedDocumentContextParameter')
+              .ele('ram:ID').txt('urn:cen.eu:en16931:2017#compliant#urn:zugferd.de:2p0:basic').up()
+            .up()
+          .up()
+          .ele('rsm:ExchangedDocument')
+            .ele('ram:ID').txt(invoice.invoice_number).up()
+            .ele('ram:TypeCode').txt('380').up()
+            .ele('ram:IssueDateTime')
+              .ele('udt:DateTimeString', { format: '102' }).txt(new Date(invoice.created_at).toISOString().split('T')[0].replace(/-/g, '')).up()
+            .up()
+          .up()
+          .ele('rsm:SupplyChainTradeTransaction')
+            .ele('ram:ApplicableHeaderTradeAgreement')
+              .ele('ram:SellerTradeParty')
+                .ele('ram:Name').txt(settings.company_name || 'Handwerksmeister').up()
+                .ele('ram:PostalTradeAddress')
+                  .ele('ram:LineOne').txt(settings.company_address || '').up()
+                  .ele('ram:CountryID').txt('DE').up()
+                .up()
+                .ele('ram:SpecifiedTaxRegistration')
+                  .ele('ram:ID', { schemeID: 'VA' }).txt(settings.tax_id || '').up()
+                .up()
+              .up()
+              .ele('ram:BuyerTradeParty')
+                .ele('ram:Name').txt(customer?.name || project.customer_name || 'Kunde').up()
+                .ele('ram:PostalTradeAddress')
+                  .ele('ram:LineOne').txt(customer?.address || project.customer_address || '').up()
+                  .ele('ram:CountryID').txt('DE').up()
+                .up()
+              .up()
+            .up()
+            .ele('ram:ApplicableHeaderTradeDelivery')
+              .ele('ram:ActualDeliverySupplyChainEvent')
+                .ele('ram:OccurrenceDateTime')
+                  .ele('udt:DateTimeString', { format: '102' }).txt(new Date(invoice.created_at).toISOString().split('T')[0].replace(/-/g, '')).up()
+                .up()
+              .up()
+            .up()
+            .ele('ram:ApplicableHeaderTradeSettlement')
+              .ele('ram:InvoiceCurrencyCode').txt(project.currency || 'EUR').up()
+              .ele('ram:SpecifiedTradeSettlementPaymentMeans')
+                .ele('ram:TypeCode').txt('42').up()
+                .ele('ram:PayeePartyCreditorFinancialAccount')
+                  .ele('ram:IBANID').txt(settings.company_iban || '').up()
+                .up()
+              .up()
+              .ele('ram:ApplicableTradeTax')
+                .ele('ram:CalculatedAmount').txt(taxAmount.toFixed(2)).up()
+                .ele('ram:BasisAmount').txt(netAmount.toFixed(2)).up()
+                .ele('ram:CategoryCode').txt('S').up()
+                .ele('ram:RateApplicablePercent').txt(taxRate.toFixed(2)).up()
+              .up()
+              .ele('ram:SpecifiedTradeSettlementMonetarySummation')
+                .ele('ram:LineTotalAmount').txt(netAmount.toFixed(2)).up()
+                .ele('ram:TaxBasisTotalAmount').txt(netAmount.toFixed(2)).up()
+                .ele('ram:TaxTotalAmount', { currencyID: project.currency || 'EUR' }).txt(taxAmount.toFixed(2)).up()
+                .ele('ram:GrandTotalAmount').txt(invoice.amount.toFixed(2)).up()
+                .ele('ram:DuePayableAmount').txt(invoice.amount.toFixed(2)).up()
+              .up()
+            .up();
+
+      // Add line items if available
+      if (items.length > 0) {
+        items.forEach((item, index) => {
+          const itemNet = (item.total || 0) / (1 + taxRate / 100);
+          const itemPrice = (item.price || 0) / (1 + taxRate / 100);
+          
+          root.ele('ram:IncludedSupplyChainTradeLineItem')
+            .ele('ram:AssociatedDocumentLineDocument')
+              .ele('ram:LineID').txt((index + 1).toString()).up()
+            .up()
+            .ele('ram:SpecifiedTradeProduct')
+              .ele('ram:Name').txt(item.title || 'Leistungsposition').up()
+            .up()
+            .ele('ram:SpecifiedLineTradeAgreement')
+              .ele('ram:NetPriceProductTradePrice')
+                .ele('ram:ChargeAmount').txt(itemPrice.toFixed(2)).up()
+              .up()
+            .up()
+            .ele('ram:SpecifiedLineTradeDelivery')
+              .ele('ram:BilledQuantity', { unitCode: 'C62' }).txt((item.quantity || 1).toString()).up()
+            .up()
+            .ele('ram:SpecifiedLineTradeSettlement')
+              .ele('ram:ApplicableTradeTax')
+                .ele('ram:CategoryCode').txt('S').up()
+                .ele('ram:RateApplicablePercent').txt(taxRate.toFixed(2)).up()
+              .up()
+              .ele('ram:SpecifiedTradeSettlementLineMonetarySummation')
+                .ele('ram:LineTotalAmount').txt(itemNet.toFixed(2)).up()
+              .up()
+            .up()
+          .up();
+        });
+      }
 
       res.setHeader('Content-Type', 'application/xml');
-      res.setHeader('Content-Disposition', `attachment; filename=invoice_${invoice.invoice_number}.xml`);
-      res.send(xml);
+      res.setHeader('Content-Disposition', `attachment; filename=zugferd_invoice_${invoice.invoice_number}.xml`);
+      res.send(root.end({ prettyPrint: true }));
     } catch (err) {
       console.error("ZUGFeRD export error:", err);
       res.status(500).send("Fehler beim Export");

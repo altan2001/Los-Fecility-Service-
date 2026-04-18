@@ -155,7 +155,7 @@ export async function initDb() {
       ];
 
       for (const pos of positions) {
-        const posRef = doc(collection(firestore, `projects/${projectRef.id}/positions`));
+        const posRef = doc(collection(firestore, `projects/${projectRef.id}/quote_items`));
         await setDoc(posRef, {
           ...pos,
           created_at: new Date().toISOString()

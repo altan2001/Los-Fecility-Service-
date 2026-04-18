@@ -29,6 +29,8 @@ import {
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import axios from 'axios';
+import { db, handleFirestoreError, OperationType } from '../firebase';
+import { collection, onSnapshot, query, orderBy, doc } from 'firebase/firestore';
 import { TradeAttributeDefinition } from '../App';
 import { PILOT_TRADE_ATTRIBUTES } from '../constants/tradeAttributes';
 import PlanAnalyzer from './PlanAnalyzer';
@@ -88,6 +90,7 @@ interface Project {
   name: string;
   customer_id?: string;
   customer_name: string;
+  customer_email?: string;
   customer_address: string;
   status: string;
   currency: string;
@@ -129,6 +132,7 @@ export default function QuoteBuilder({ initialProjectId, initialView, userId }: 
     name: '', 
     customer_id: undefined as string | undefined,
     customer_name: '', 
+    customer_email: '',
     customer_address: '',
     currency: 'EUR',
     tax_rate: 19,
@@ -182,6 +186,101 @@ export default function QuoteBuilder({ initialProjectId, initialView, userId }: 
 
   // GAEB Import
   const [isUploadingGaeb, setIsUploadingGaeb] = useState(false);
+  const [isOptimizingText, setIsOptimizingText] = useState<string | null>(null);
+  const [isSuggestingCalculation, setIsSuggestingCalculation] = useState(false);
+  const [wholesalerResults, setWholesalerResults] = useState<any[]>([]);
+  const [isSearchingWholesaler, setIsSearchingWholesaler] = useState(false);
+  const [activeCatalogTab, setActiveCatalogTab] = useState<'internal' | 'wholesaler'>('internal');
+  const [wholesalers, setWholesalers] = useState<any[]>([]);
+
+  useEffect(() => {
+    const fetchWholesalers = async () => {
+      try {
+        const res = await fetch('/api/wholesalers');
+        const data = await res.json();
+        setWholesalers(data);
+      } catch (err) {
+        console.error('Error fetching wholesalers:', err);
+      }
+    };
+    fetchWholesalers();
+  }, []);
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'IDS_IMPORT_SUCCESS' && selectedProject) {
+        if (event.data.projectId === selectedProject.id) {
+          alert('Artikel erfolgreich vom Großhandel importiert!');
+          handleSelectProject(selectedProject.id);
+        }
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [selectedProject]);
+
+  // Real-time sync for project items
+  useEffect(() => {
+    if (!selectedProject?.id) return;
+
+    const itemsRef = collection(db, `projects/${selectedProject.id}/items`);
+    const q = query(itemsRef, orderBy('created_at', 'asc'));
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as QuoteItem));
+      setSelectedProject(prev => prev ? { ...prev, items } : null);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, `projects/${selectedProject.id}/items`));
+
+    return () => unsubscribe();
+  }, [selectedProject?.id]);
+
+  // Real-time sync for project details
+  useEffect(() => {
+    if (!selectedProject?.id) return;
+
+    const projectRef = doc(db, 'projects', selectedProject.id);
+    const unsubscribe = onSnapshot(projectRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        setSelectedProject(prev => prev ? { ...prev, ...data } : null);
+      }
+    }, (error) => handleFirestoreError(error, OperationType.GET, `projects/${selectedProject.id}`));
+
+    return () => unsubscribe();
+  }, [selectedProject?.id]);
+
+  const handleIDSLogin = async (wholesalerId: string) => {
+    if (!selectedProject) return;
+    try {
+      const res = await fetch('/api/wholesalers/ids-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wholesalerId, projectId: selectedProject.id })
+      });
+      const data = await res.json();
+      if (data.success) {
+        // Create a form and submit it to open the wholesaler shop
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = data.url;
+        form.target = '_blank';
+
+        Object.entries(data.params).forEach(([key, value]) => {
+          const input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = key;
+          input.value = value as string;
+          form.appendChild(input);
+        });
+
+        document.body.appendChild(form);
+        form.submit();
+        document.body.removeChild(form);
+      }
+    } catch (err) {
+      console.error('IDS Login Error:', err);
+    }
+  };
 
   const checkMeisterRequirement = () => {
     if (!selectedProject || !selectedProject.items) return false;
@@ -255,6 +354,7 @@ export default function QuoteBuilder({ initialProjectId, initialView, userId }: 
           name: '', 
           customer_id: undefined,
           customer_name: '', 
+          customer_email: '',
           customer_address: '',
           currency: 'EUR',
           tax_rate: 19,
@@ -959,6 +1059,97 @@ export default function QuoteBuilder({ initialProjectId, initialView, userId }: 
     }
   };
 
+  const handleAIOptimizeText = async (itemId: string, currentText: string, context: string) => {
+    setIsOptimizingText(itemId);
+    try {
+      const res = await fetch('/api/ai/optimize-text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: currentText, context })
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (itemId === 'manual') {
+          setManualItem(prev => ({ ...prev, description: data.optimizedText }));
+        } else {
+          handleUpdateItem(itemId, { description: data.optimizedText });
+        }
+      }
+    } catch (err) {
+      console.error('Error optimizing text:', err);
+    } finally {
+      setIsOptimizingText(null);
+    }
+  };
+
+  const handleAISuggestCalculation = async () => {
+    if (!manualItem.name) return;
+    setIsSuggestingCalculation(true);
+    try {
+      const res = await fetch('/api/ai/suggest-calculation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description: manualItem.name, trade: selectedTradeId !== 'all' ? catalog.find(t => t.id === selectedTradeId)?.name : '' })
+      });
+      const data = await res.json();
+      if (data.success) {
+        const s = data.suggestion;
+        setManualItem({
+          ...manualItem,
+          name: s.title || manualItem.name,
+          unit: s.unit || manualItem.unit,
+          material_price: s.material_cost || manualItem.material_price,
+          labor_hours: s.labor_hours || manualItem.labor_hours,
+          description: s.description || manualItem.description
+        });
+      }
+    } catch (err) {
+      console.error('Error suggesting calculation:', err);
+    } finally {
+      setIsSuggestingCalculation(false);
+    }
+  };
+
+  const handleWholesalerSearch = async () => {
+    if (!searchTerm) return;
+    setIsSearchingWholesaler(true);
+    try {
+      const res = await fetch(`/api/wholesaler/search?q=${encodeURIComponent(searchTerm)}`);
+      const data = await res.json();
+      setWholesalerResults(data);
+    } catch (err) {
+      console.error('Error searching wholesaler:', err);
+    } finally {
+      setIsSearchingWholesaler(false);
+    }
+  };
+
+  const handleAddWholesalerItem = async (item: any) => {
+    if (!selectedProject) return;
+    try {
+      const res = await fetch(`/api/projects/${selectedProject.id}/items`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          trade_id: catalog[0]?.id || 1,
+          name: item.name,
+          description: `Großhandel: ${item.brand} (Art-Nr: ${item.sku})`,
+          unit: item.unit,
+          quantity: 1,
+          labor_hours_per_unit: 0,
+          material_price_per_unit: item.price
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        handleSelectProject(selectedProject.id);
+        setMessage({ type: 'success', text: 'Material vom Großhandel hinzugefügt.' });
+      }
+    } catch (err) {
+      console.error('Error adding wholesaler item:', err);
+    }
+  };
+
   const handleGaebUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !selectedProject) return;
@@ -1480,12 +1671,22 @@ export default function QuoteBuilder({ initialProjectId, initialView, userId }: 
                                 <Trash2 size={18} />
                               </button>
                             </div>
-                            <textarea 
-                              value={item.description}
-                              onChange={(e) => handleUpdateItem(item.id, { description: e.target.value })}
-                              className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all resize-none"
-                              rows={2}
-                            />
+                            <div className="relative">
+                              <textarea 
+                                value={item.description}
+                                onChange={(e) => handleUpdateItem(item.id, { description: e.target.value })}
+                                className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all resize-none pr-12"
+                                rows={2}
+                              />
+                              <button
+                                onClick={() => handleAIOptimizeText(item.id, item.description, catalog.find(t => t.id === item.trade_id)?.name || 'Bauleistung')}
+                                disabled={isOptimizingText === item.id}
+                                className="absolute right-3 bottom-3 p-2 bg-white rounded-xl text-brand-primary shadow-sm hover:bg-brand-primary hover:text-white transition-all disabled:opacity-50"
+                                title="KI-Optimieren"
+                              >
+                                {isOptimizingText === item.id ? <Loader2 size={14} className="animate-spin" /> : <Calculator size={14} />}
+                              </button>
+                            </div>
                           </div>
                         </div>
 
@@ -1993,7 +2194,17 @@ export default function QuoteBuilder({ initialProjectId, initialView, userId }: 
                     <p className="text-xs text-slate-400 font-medium">Fügen Sie eine neue Leistung manuell hinzu.</p>
                     <div className="space-y-4">
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Name der Leistung</label>
+                        <div className="flex justify-between items-center">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Name der Leistung</label>
+                          <button 
+                            onClick={handleAISuggestCalculation}
+                            disabled={!manualItem.name || isSuggestingCalculation}
+                            className="text-[9px] font-bold text-brand-primary uppercase tracking-widest hover:text-brand-dark transition-colors flex items-center gap-1 disabled:opacity-50"
+                          >
+                            {isSuggestingCalculation ? <Loader2 size={10} className="animate-spin" /> : <Calculator size={10} />}
+                            KI-Vorschlag
+                          </button>
+                        </div>
                         <input 
                           type="text"
                           placeholder="z.B. Sonderreinigung Fassade"
@@ -2102,55 +2313,159 @@ export default function QuoteBuilder({ initialProjectId, initialView, userId }: 
                   <h3 className="text-xl font-black text-brand-dark flex items-center gap-2">
                     <Search size={20} className="text-brand-primary" /> Katalog durchsuchen
                   </h3>
-                  <div className="space-y-3">
-                    <input 
-                      type="text"
-                      placeholder="Leistung suchen..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="w-full p-3 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary/20"
-                    />
-                    <select 
-                      value={selectedTradeId}
-                      onChange={(e) => setSelectedTradeId(e.target.value)}
-                      className="w-full p-3 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary/20"
+                  
+                  <div className="flex p-1 bg-slate-100 rounded-xl">
+                    <button
+                      onClick={() => setActiveCatalogTab('internal')}
+                      className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${
+                        activeCatalogTab === 'internal' ? 'bg-white text-brand-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                      }`}
                     >
-                      <option value="all">Alle Gewerke</option>
-                      {catalog.map(trade => (
-                        <option key={trade.id} value={trade.id}>{trade.name}</option>
-                      ))}
-                    </select>
+                      Intern
+                    </button>
+                    <button
+                      onClick={() => setActiveCatalogTab('wholesaler')}
+                      className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${
+                        activeCatalogTab === 'wholesaler' ? 'bg-white text-brand-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      Großhandel
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="relative">
+                      <input 
+                        type="text"
+                        placeholder={activeCatalogTab === 'internal' ? "Leistung suchen..." : "Material beim Großhandel suchen..."}
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && activeCatalogTab === 'wholesaler' && handleWholesalerSearch()}
+                        className="w-full p-3 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary/20 pr-10"
+                      />
+                      {activeCatalogTab === 'wholesaler' && (
+                        <button 
+                          onClick={handleWholesalerSearch}
+                          disabled={isSearchingWholesaler}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-brand-primary hover:bg-slate-50 rounded-lg transition-all"
+                        >
+                          {isSearchingWholesaler ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
+                        </button>
+                      )}
+                    </div>
+                    {activeCatalogTab === 'internal' && (
+                      <select 
+                        value={selectedTradeId}
+                        onChange={(e) => setSelectedTradeId(e.target.value)}
+                        className="w-full p-3 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary/20"
+                      >
+                        <option value="all">Alle Gewerke</option>
+                        {catalog.map(trade => (
+                          <option key={trade.id} value={trade.id}>{trade.name}</option>
+                        ))}
+                      </select>
+                    )}
                   </div>
                 </div>
                 <div className="max-h-[600px] overflow-y-auto divide-y divide-slate-50">
-                  {catalog
-                    .filter(t => selectedTradeId === 'all' || t.id === selectedTradeId)
-                    .flatMap(t => t.items.map(item => ({ ...item, tradeName: t.name })))
-                    .filter(item => item.name.toLowerCase().includes(searchTerm.toLowerCase()))
-                    .map(item => (
-                      <div key={item.id} className="p-6 hover:bg-slate-50 transition-colors group">
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="flex-1">
-                            <h4 className="font-bold text-brand-dark text-sm leading-tight">{item.name}</h4>
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{item.tradeName}</p>
-                            <div className="flex items-center gap-3 mt-2">
-                              <span className="text-[10px] font-bold text-brand-primary flex items-center gap-1">
-                                <Clock size={10} /> {item.labor_hours}h
-                              </span>
-                              <span className="text-[10px] font-bold text-emerald-600 flex items-center gap-1">
-                                <Euro size={10} /> {item.material_price}€
-                              </span>
+                  {activeCatalogTab === 'internal' ? (
+                    catalog
+                      .filter(t => selectedTradeId === 'all' || t.id === selectedTradeId)
+                      .flatMap(t => t.items.map(item => ({ ...item, tradeName: t.name })))
+                      .filter(item => item.name.toLowerCase().includes(searchTerm.toLowerCase()))
+                      .map(item => (
+                        <div key={item.id} className="p-6 hover:bg-slate-50 transition-colors group">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="flex-1">
+                              <h4 className="font-bold text-brand-dark text-sm leading-tight">{item.name}</h4>
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{item.tradeName}</p>
+                              <div className="flex items-center gap-3 mt-2">
+                                <span className="text-[10px] font-bold text-brand-primary flex items-center gap-1">
+                                  <Clock size={10} /> {item.labor_hours}h
+                                </span>
+                                <span className="text-[10px] font-bold text-emerald-600 flex items-center gap-1">
+                                  <Euro size={10} /> {item.material_price}€
+                                </span>
+                              </div>
                             </div>
+                            <button 
+                              onClick={() => handleAddItem(item)}
+                              className="p-2 bg-brand-accent text-brand-primary rounded-xl hover:bg-brand-primary hover:text-white transition-all"
+                            >
+                              <Plus size={18} />
+                            </button>
                           </div>
-                          <button 
-                            onClick={() => handleAddItem(item)}
-                            className="p-2 bg-brand-accent text-brand-primary rounded-xl hover:bg-brand-primary hover:text-white transition-all"
-                          >
-                            <Plus size={18} />
-                          </button>
+                        </div>
+                      ))
+                  ) : (
+                    <div className="p-6 space-y-6">
+                      {/* IDS-Connect Section */}
+                      <div className="space-y-4">
+                        <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest">Direkt-Import (IDS-Connect)</h4>
+                        <div className="grid grid-cols-1 gap-3">
+                          {wholesalers.map(wh => (
+                            <button
+                              key={wh.id}
+                              onClick={() => handleIDSLogin(wh.id)}
+                              className="flex items-center justify-between p-4 bg-slate-50 border border-slate-100 rounded-2xl hover:border-brand-primary/30 hover:bg-white transition-all group"
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-brand-primary shadow-sm group-hover:scale-110 transition-transform">
+                                  <LinkIcon size={20} />
+                                </div>
+                                <div className="text-left">
+                                  <p className="text-sm font-bold text-brand-dark">{wh.name}</p>
+                                  <p className="text-[10px] text-slate-400 font-medium">Shop öffnen & Warenkorb übertragen</p>
+                                </div>
+                              </div>
+                              <ChevronRight size={18} className="text-slate-300 group-hover:text-brand-primary transition-colors" />
+                            </button>
+                          ))}
                         </div>
                       </div>
-                    ))}
+
+                      <div className="relative py-4">
+                        <div className="absolute inset-0 flex items-center">
+                          <div className="w-full border-t border-slate-100"></div>
+                        </div>
+                        <div className="relative flex justify-center">
+                          <span className="px-4 bg-white text-[10px] font-bold text-slate-400 uppercase tracking-widest">Oder Suche</span>
+                        </div>
+                      </div>
+
+                      {/* Manual Search Section */}
+                      <div className="space-y-4">
+                        {wholesalerResults.length === 0 && !isSearchingWholesaler ? (
+                          <div className="text-center py-8 text-slate-400">
+                            <Search size={32} className="mx-auto mb-2 opacity-20" />
+                            <p className="text-xs font-medium">Suchen Sie nach Artikeln oder nutzen Sie IDS-Connect oben.</p>
+                          </div>
+                        ) : (
+                          wholesalerResults.map(item => (
+                            <div key={item.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-brand-primary/30 transition-all">
+                              <div className="flex items-start justify-between gap-4">
+                                <div className="flex-1">
+                                  <h4 className="font-bold text-brand-dark text-sm leading-tight">{item.name}</h4>
+                                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{item.brand} | Art-Nr: {item.sku}</p>
+                                  <div className="flex items-center gap-3 mt-2">
+                                    <span className="text-[10px] font-bold text-emerald-600 flex items-center gap-1">
+                                      <Euro size={10} /> {item.price}€ / {item.unit}
+                                    </span>
+                                  </div>
+                                </div>
+                                <button 
+                                  onClick={() => handleAddWholesalerItem(item)}
+                                  className="p-2 bg-white text-brand-primary rounded-xl border border-slate-100 hover:bg-brand-primary hover:text-white transition-all shadow-sm"
+                                >
+                                  <Plus size={18} />
+                                </button>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -2482,6 +2797,16 @@ export default function QuoteBuilder({ initialProjectId, initialView, userId }: 
                         value={newProject.customer_name}
                         onChange={(e) => setNewProject({ ...newProject, customer_name: e.target.value })}
                         placeholder="Max Mustermann"
+                        className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all font-bold text-brand-dark"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Kunden-Email (für Portal)</label>
+                      <input 
+                        type="email" 
+                        value={newProject.customer_email}
+                        onChange={(e) => setNewProject({ ...newProject, customer_email: e.target.value })}
+                        placeholder="kunde@beispiel.de"
                         className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all font-bold text-brand-dark"
                       />
                     </div>

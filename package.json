@@ -38,6 +38,8 @@
     "recharts": "^3.8.0",
     "stripe": "^20.4.1",
     "vite": "^6.2.0",
+    "vite-plugin-pwa": "^1.2.0",
+    "workbox-window": "^7.4.0",
     "xml2js": "^0.6.2",
     "xmlbuilder2": "^4.0.3"
   },

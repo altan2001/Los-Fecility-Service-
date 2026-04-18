@@ -145,46 +145,57 @@ service cloud.firestore {
     }
 
     match /customers/{customerId} {
-      allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
+      allow read: if true;
+      allow write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
 
       match /communication_logs/{logId} {
-        allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
+        allow read: if true;
+        allow write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
       }
     }
 
     match /projects/{projectId} {
-      allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
+      allow read: if true;
+      allow write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
       
       match /quote_items/{itemId} {
-        allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
+        allow read: if true;
+        allow write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
 
         match /labor/{laborId} {
-          allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
+          allow read: if true;
+          allow write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
         }
       }
       
       match /diaries/{diaryId} {
-        allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter']);
+        allow read: if true;
+        allow write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter']);
 
         match /presence/{presenceId} {
-          allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter']);
+          allow read: if true;
+          allow write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter']);
         }
 
         match /attachments/{attachmentId} {
-          allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter']);
+          allow read: if true;
+          allow write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter']);
         }
       }
 
       match /change_orders/{orderId} {
-        allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
+        allow read: if true;
+        allow write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
       }
 
       match /invoices/{invoiceId} {
-        allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
+        allow read: if true;
+        allow write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
       }
 
       match /images/{imageId} {
-        allow read, write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
+        allow read: if true;
+        allow write: if isAuthenticated() && hasAnyRole(['superadmin', 'admin', 'bauleiter', 'kalkulator']);
       }
     }
 

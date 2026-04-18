@@ -46,8 +46,12 @@ export default function InvoiceManager() {
   const [selectedInvoiceForReminder, setSelectedInvoiceForReminder] = useState<Invoice | null>(null);
   const [customReminderMessage, setCustomReminderMessage] = useState('');
   const [showValidationModal, setShowValidationModal] = useState<string | null>(null);
+  const [showAuditModal, setShowAuditModal] = useState<string | null>(null);
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [validationResult, setValidationResult] = useState<{ errors: string[], warnings: string[], isReady: boolean } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [progressSummary, setProgressSummary] = useState<any>(null);
+  const [isCalculatingProgress, setIsCalculatingProgress] = useState(false);
   const [newInvoice, setNewInvoice] = useState({
     invoice_number: `RE-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
     type: 'Abschlagsrechnung' as const,
@@ -108,6 +112,13 @@ export default function InvoiceManager() {
       const res = await fetch(`/api/projects/${projectId}/invoices`);
       const data = await res.json();
       setInvoices(data);
+      
+      // Also fetch progress summary
+      const progressRes = await fetch(`/api/projects/${projectId}/progress-summary`);
+      const progressData = await progressRes.json();
+      if (progressData.success) {
+        setProgressSummary(progressData);
+      }
     } catch (err) {
       console.error('Error fetching invoices:', err);
     } finally {
@@ -143,6 +154,16 @@ export default function InvoiceManager() {
     }
   };
 
+  const applyProgressAmount = () => {
+    if (progressSummary) {
+      setNewInvoice(prev => ({
+        ...prev,
+        amount: Number(progressSummary.remainingToInvoice.toFixed(2))
+      }));
+      showNotification('Betrag aus Projektfortschritt übernommen.', 'success');
+    }
+  };
+
   const validateEInvoice = async (invoice: Invoice) => {
     setLoading(true);
     try {
@@ -152,6 +173,20 @@ export default function InvoiceManager() {
       setShowValidationModal(invoice.id);
     } catch (err) {
       console.error('Error validating invoice:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchAuditLogs = async (invoice: Invoice) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/audit-logs/invoice/${invoice.id}`);
+      const data = await res.json();
+      setAuditLogs(data);
+      setShowAuditModal(invoice.id);
+    } catch (err) {
+      console.error('Error fetching audit logs:', err);
     } finally {
       setLoading(false);
     }
@@ -324,6 +359,13 @@ export default function InvoiceManager() {
                         </button>
                       )}
                       <button 
+                        onClick={() => fetchAuditLogs(invoice)}
+                        className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 hover:text-brand-primary transition-all"
+                        title="Audit Log / Verlauf"
+                      >
+                        <Clock size={20} />
+                      </button>
+                      <button 
                         onClick={() => validateEInvoice(invoice)}
                         className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-600 hover:bg-blue-100 transition-all"
                         title="E-Rechnung Validierung"
@@ -411,14 +453,32 @@ export default function InvoiceManager() {
                   <div className="grid grid-cols-2 gap-6">
                     <div>
                       <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 ml-1">Bruttobetrag (€)</label>
-                      <input 
-                        type="number" 
-                        required
-                        step="0.01"
-                        value={newInvoice.amount}
-                        onChange={e => setNewInvoice({ ...newInvoice, amount: Number(e.target.value) })}
-                        className="w-full bg-slate-50 border border-transparent focus:border-brand-primary/30 rounded-2xl py-4 px-6 outline-none transition-all font-bold text-brand-dark"
-                      />
+                      <div className="relative">
+                        <input 
+                          type="number" 
+                          required
+                          step="0.01"
+                          value={newInvoice.amount}
+                          onChange={e => setNewInvoice({ ...newInvoice, amount: Number(e.target.value) })}
+                          className="w-full bg-slate-50 border border-transparent focus:border-brand-primary/30 rounded-2xl py-4 px-6 outline-none transition-all font-bold text-brand-dark pr-12"
+                        />
+                        <div className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-400 font-bold">€</div>
+                      </div>
+                      {progressSummary && (
+                        <div className="mt-4 p-5 bg-brand-primary/5 rounded-2xl border border-brand-primary/10">
+                          <div className="flex items-center justify-between mb-3">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Offener Fortschritt</span>
+                            <span className="text-sm font-black text-brand-primary">{progressSummary.remainingToInvoice.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })}</span>
+                          </div>
+                          <button 
+                            type="button"
+                            onClick={applyProgressAmount}
+                            className="w-full py-2.5 bg-brand-primary text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-brand-dark transition-all shadow-sm"
+                          >
+                            Betrag übernehmen
+                          </button>
+                        </div>
+                      )}
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 ml-1">Zahlungsziel</label>
@@ -610,6 +670,73 @@ export default function InvoiceManager() {
                     Schließen
                   </button>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Audit Log Modal */}
+      <AnimatePresence>
+        {showAuditModal && (
+          <div className="fixed inset-0 bg-brand-dark/60 backdrop-blur-sm z-50 flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-white w-full max-w-xl rounded-[3rem] shadow-2xl overflow-hidden"
+            >
+              <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-brand-dark">
+                    <Clock size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-brand-dark tracking-tighter">Audit Log / Verlauf</h3>
+                    <p className="text-slate-400 text-xs font-bold uppercase tracking-widest">Rechnungsverlauf & Rechtssicherheit</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowAuditModal(null)} className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-400 hover:text-brand-dark transition-colors shadow-sm">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="p-8 max-h-[60vh] overflow-y-auto space-y-6">
+                {auditLogs.length === 0 ? (
+                  <p className="text-center text-slate-400 py-8">Keine Einträge vorhanden.</p>
+                ) : (
+                  <div className="relative space-y-8 before:absolute before:left-[19px] before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-100">
+                    {auditLogs.map((log, i) => (
+                      <div key={log.id} className="relative pl-12">
+                        <div className={`absolute left-0 top-1 w-10 h-10 rounded-xl flex items-center justify-center border-4 border-white shadow-sm ${
+                          log.action === 'created' ? 'bg-emerald-100 text-emerald-600' : 
+                          log.action === 'reminder_sent' ? 'bg-amber-100 text-amber-600' : 
+                          'bg-blue-100 text-blue-600'
+                        }`}>
+                          {log.action === 'created' ? <Plus size={16} /> : 
+                           log.action === 'reminder_sent' ? <AlertTriangle size={16} /> : 
+                           <Info size={16} />}
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
+                            {new Date(log.timestamp).toLocaleString('de-DE')}
+                          </p>
+                          <h5 className="font-bold text-brand-dark">{log.details}</h5>
+                          <p className="text-slate-500 text-sm mt-1">Aktion: {log.action}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-8 bg-slate-50 border-t border-slate-100 flex justify-end">
+                <button 
+                  onClick={() => setShowAuditModal(null)}
+                  className="bg-brand-dark text-white px-8 py-4 rounded-2xl font-bold hover:bg-brand-primary transition-all"
+                >
+                  Schließen
+                </button>
               </div>
             </motion.div>
           </div>

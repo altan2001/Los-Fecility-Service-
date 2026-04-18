@@ -27,7 +27,8 @@ import {
   Globe,
   Search,
   Euro,
-  Database
+  Database,
+  AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Tabs } from './components/Tabs';
@@ -47,6 +48,24 @@ import ProjectVisualOverview from './components/ProjectVisualOverview';
 import SketchPad from './components/SketchPad';
 import ServiceCatalog from './components/ServiceCatalog';
 import DatanormImport from './components/DatanormImport';
+import DefectManager from './components/DefectManager';
+import DocumentManager from './components/DocumentManager';
+import WorkerApp from './components/WorkerApp';
+
+const getEmbedUrl = (url: string) => {
+  if (!url) return null;
+  if (url.includes('youtube.com') || url.includes('youtu.be')) {
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const match = url.match(regExp);
+    return (match && match[2].length === 11) ? `https://www.youtube.com/embed/${match[2]}` : url;
+  }
+  if (url.includes('vimeo.com')) {
+    const regExp = /vimeo\.com\/(\d+)/;
+    const match = url.match(regExp);
+    return match ? `https://player.vimeo.com/video/${match[1]}` : url;
+  }
+  return null;
+};
 
 import { useAuth, TradeAttributeDefinition } from './App';
 import { auth, db } from './firebase';
@@ -65,12 +84,12 @@ export type MediaItem = {
   sort_order: number;
 };
 
-export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashboard' | 'projects_visual' | 'customers' | 'content' | 'media' | 'settings' | 'calc' | 'quotes' | 'rates' | 'diaries' | 'change-orders' | 'invoices' | 'resources' | 'reports' | 'projects' | 'sketches' | 'catalog' | 'users' }) {
+export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashboard' | 'projects_visual' | 'customers' | 'content' | 'media' | 'settings' | 'calc' | 'quotes' | 'rates' | 'diaries' | 'change-orders' | 'invoices' | 'resources' | 'reports' | 'projects' | 'sketches' | 'catalog' | 'users' | 'defects' | 'documents' | 'worker-app' }) {
   const { user, isAdmin, permissions, loading: authLoading, handleLogin, handleLogout } = useAuth();
   const [userProfile, setUserProfile] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [ratesSearchTerm, setRatesSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'projects_visual' | 'customers' | 'content' | 'media' | 'settings' | 'calc' | 'quotes' | 'rates' | 'diaries' | 'change-orders' | 'invoices' | 'resources' | 'reports' | 'projects' | 'sketches' | 'catalog' | 'users'>(activeTabDefault || 'dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'projects_visual' | 'customers' | 'content' | 'media' | 'settings' | 'calc' | 'quotes' | 'rates' | 'diaries' | 'change-orders' | 'invoices' | 'resources' | 'reports' | 'projects' | 'sketches' | 'catalog' | 'users' | 'defects' | 'documents' | 'worker-app'>(activeTabDefault || 'dashboard');
   
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
@@ -910,6 +929,20 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
                 label="Bautagebuch"
               />
               <SidebarLink 
+                id="admin-sidebar-defects"
+                active={activeTab === 'defects'} 
+                onClick={() => setActiveTab('defects')}
+                icon={<AlertCircle size={20} />}
+                label="Mängel"
+              />
+              <SidebarLink 
+                id="admin-sidebar-documents"
+                active={activeTab === 'documents'} 
+                onClick={() => setActiveTab('documents')}
+                icon={<FileText size={20} />}
+                label="Dokumente"
+              />
+              <SidebarLink 
                 id="admin-sidebar-change-orders"
                 active={activeTab === 'change-orders'} 
                 onClick={() => setActiveTab('change-orders')}
@@ -929,6 +962,13 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
                 onClick={() => setActiveTab('resources')}
                 icon={<Users size={20} />}
                 label="Ressourcen"
+              />
+              <SidebarLink 
+                id="admin-sidebar-worker-app"
+                active={activeTab === 'worker-app'} 
+                onClick={() => setActiveTab('worker-app')}
+                icon={<HardHat size={20} />}
+                label="Mitarbeiter-App"
               />
             </>
           )}
@@ -1241,6 +1281,35 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
                       >
                         <Trash2 size={20} />
                       </button>
+                    </div>
+
+                    <div className="aspect-video rounded-2xl overflow-hidden bg-slate-100 mb-6 relative group/preview">
+                      {item.type === 'video' ? (
+                        <div className="w-full h-full flex items-center justify-center">
+                          {getEmbedUrl(item.url) ? (
+                            <iframe 
+                              src={getEmbedUrl(item.url)!} 
+                              className="w-full h-full border-none"
+                              allowFullScreen
+                            />
+                          ) : (
+                            <div className="text-slate-400 flex flex-col items-center gap-2">
+                              <Video size={32} />
+                              <span className="text-[10px] font-bold uppercase tracking-widest">Video Vorschau nicht verfügbar</span>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <img 
+                          src={item.url} 
+                          alt={item.title} 
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/error/800/600';
+                          }}
+                        />
+                      )}
                     </div>
 
                     <div className="space-y-4">
@@ -2455,6 +2524,24 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
                   </table>
                 </div>
               </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'defects' && (
+            <motion.div key="defects" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
+              <DefectManager />
+            </motion.div>
+          )}
+
+          {activeTab === 'documents' && (
+            <motion.div key="documents" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
+              <DocumentManager />
+            </motion.div>
+          )}
+
+          {activeTab === 'worker-app' && (
+            <motion.div key="worker-app" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
+              <WorkerApp />
             </motion.div>
           )}
 

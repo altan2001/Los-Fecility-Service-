@@ -17,9 +17,15 @@ import {
   Download,
   ChevronRight,
   Loader2,
-  Maximize2
+  Maximize2,
+  Wifi,
+  WifiOff,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { addToOfflineQueue, getOfflineQueue, syncOfflineQueue } from '../lib/offlineSync';
+import { db, handleFirestoreError, OperationType } from '../firebase';
+import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 
 interface Project {
   id: string;
@@ -78,6 +84,44 @@ export default function ConstructionDiary({ initialProjectId }: { initialProject
   const [uploading, setUploading] = useState(false);
   const [analyzingPhotoId, setAnalyzingPhotoId] = useState<string | null>(null);
   const [photoAnalysis, setPhotoAnalysis] = useState<Record<string, string>>({});
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [offlineCount, setOfflineCount] = useState(getOfflineQueue().length);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      syncOfflineQueue();
+    };
+    const handleOffline = () => setIsOnline(false);
+    const handleOfflineAdded = () => setOfflineCount(getOfflineQueue().length);
+    const handleSyncCompleted = () => setOfflineCount(getOfflineQueue().length);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('offline-action-added', handleOfflineAdded);
+    window.addEventListener('offline-sync-completed', handleSyncCompleted);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('offline-action-added', handleOfflineAdded);
+      window.removeEventListener('offline-sync-completed', handleSyncCompleted);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (selectedProject) {
+      const diariesRef = collection(db, `projects/${selectedProject}/diaries`);
+      const q = query(diariesRef, orderBy('date', 'desc'));
+
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const diariesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as DiaryEntry));
+        setDiaries(diariesData);
+      }, (error) => handleFirestoreError(error, OperationType.LIST, `projects/${selectedProject}/diaries`));
+
+      return () => unsubscribe();
+    }
+  }, [selectedProject]);
 
   useEffect(() => {
     fetchProjects();
@@ -154,14 +198,37 @@ export default function ConstructionDiary({ initialProjectId }: { initialProject
     }
     setLoading(true);
     try {
+      const payload = {
+        ...newDiary,
+        project_id: projectId,
+        presence: presenceList
+      };
+
+      if (!navigator.onLine) {
+        addToOfflineQueue({
+          url: `/api/projects/${projectId}/diaries`,
+          method: 'POST',
+          body: payload,
+          entityType: 'diary'
+        });
+        
+        setShowNewDiaryForm(false);
+        // Reset form
+        setNewDiary({
+          project_id: null,
+          date: new Date().toISOString().split('T')[0],
+          weather: 'Sonnig',
+          temperature: 18,
+          work_done: 'Materialanlieferung und Baustelleneinrichtung. Beginn der Arbeiten gemäß Bauzeitenplan.',
+          notes: 'Keine besonderen Vorkommnisse.'
+        });
+        return;
+      }
+
       const res = await fetch(`/api/projects/${projectId}/diaries`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...newDiary,
-          project_id: projectId,
-          presence: presenceList
-        })
+        body: JSON.stringify(payload)
       });
       if (res.ok) {
         setShowNewDiaryForm(false);
@@ -247,6 +314,34 @@ export default function ConstructionDiary({ initialProjectId }: { initialProject
 
   return (
     <div id="construction-diary-container" className="space-y-8">
+      {/* Offline Status Bar */}
+      <AnimatePresence>
+        {(!isOnline || offlineCount > 0) && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className={`p-4 rounded-2xl flex items-center justify-between gap-4 ${!isOnline ? 'bg-red-50 text-red-700 border border-red-100' : 'bg-amber-50 text-amber-700 border border-amber-100'}`}
+          >
+            <div className="flex items-center gap-3">
+              {!isOnline ? <WifiOff size={20} /> : <Wifi size={20} />}
+              <span className="text-sm font-bold">
+                {!isOnline 
+                  ? 'Sie sind offline. Änderungen werden lokal gespeichert.' 
+                  : `${offlineCount} Eintrag/Einträge warten auf Synchronisierung.`}
+              </span>
+            </div>
+            {isOnline && offlineCount > 0 && (
+              <button 
+                onClick={() => syncOfflineQueue()}
+                className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest shadow-sm hover:bg-slate-50 transition-all"
+              >
+                <RefreshCw size={14} /> Jetzt Synchronisieren
+              </button>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
       <div id="diary-project-selector-bar" className="bg-white p-8 rounded-[2rem] shadow-sm border border-slate-100 flex flex-col md:flex-row md:items-end gap-6">
         <div className="flex-1">
           <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Projekt auswählen</label>

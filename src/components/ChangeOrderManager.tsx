@@ -13,6 +13,8 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
+import { db, handleFirestoreError, OperationType } from '../firebase';
+import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 
 interface Project {
   id: string;
@@ -60,6 +62,20 @@ export default function ChangeOrderManager({ initialProjectId }: ChangeOrderMana
   useEffect(() => {
     if (selectedProject) {
       fetchChangeOrders(selectedProject);
+    }
+  }, [selectedProject]);
+
+  useEffect(() => {
+    if (selectedProject) {
+      const ordersRef = collection(db, `projects/${selectedProject}/change_orders`);
+      const q = query(ordersRef, orderBy('created_at', 'desc'));
+
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const ordersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ChangeOrder));
+        setChangeOrders(ordersData);
+      }, (error) => handleFirestoreError(error, OperationType.LIST, `projects/${selectedProject}/change_orders`));
+
+      return () => unsubscribe();
     }
   }, [selectedProject]);
 

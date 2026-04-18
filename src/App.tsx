@@ -28,6 +28,7 @@ import {
   Clock,
   Zap,
   HardHat,
+  PenTool,
   Construction,
   Video,
   LayoutDashboard,
@@ -45,6 +46,7 @@ import LiveCalculator from './components/LiveCalculator';
 import ServiceCatalog from './components/ServiceCatalog';
 import QuoteBuilder from './components/QuoteBuilder';
 import Pricing from './components/Pricing';
+import CustomerPortal from './components/CustomerPortal';
 import { UIProvider, useUI } from './components/UIContext';
 
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
@@ -250,6 +252,7 @@ export default function App() {
             <Route path="/pricing" element={<Pricing />} />
             <Route path="/admin/quotes" element={<Admin activeTabDefault="quotes" />} />
             <Route path="/admin/rates" element={<Admin activeTabDefault="rates" />} />
+            <Route path="/portal" element={<CustomerPortal />} />
             <Route path="/impressum" element={<LegalPage title="Impressum" content={<ImpressumContent />} />} />
             <Route path="/datenschutz" element={<LegalPage title="Datenschutz" content={<DatenschutzContent />} />} />
             <Route path="/agb" element={<LegalPage title="AGB" content={<AGBContent />} />} />
@@ -816,13 +819,13 @@ function MainSite() {
               {user ? (
                 <div className="flex items-center gap-2 md:gap-4">
                   {user && (
-                    <a 
-                      href="#meine-projekte" 
+                    <Link 
+                      to="/portal" 
                       className="text-xs md:text-sm font-bold px-3 py-1.5 md:px-4 md:py-2 bg-brand-accent text-brand-primary rounded-lg hover:bg-brand-primary hover:text-white transition-all flex items-center gap-2"
                     >
                       <FileText size={14} className="hidden md:block" />
-                      Meine Projekte
-                    </a>
+                      Kundenportal
+                    </Link>
                   )}
                   {isAdmin && (
                     <Link 
@@ -1133,16 +1136,48 @@ function MainSite() {
       {user && (
         <section id="meine-projekte" className="py-20 bg-slate-50">
           <div className="max-w-7xl mx-auto px-6">
-            <div className="text-center mb-16">
-              <h2 className="text-sm font-bold text-brand-secondary uppercase tracking-[0.3em] mb-4">Ihre Übersicht</h2>
-              <h3 className="text-4xl md:text-5xl font-black text-brand-dark tracking-tighter mb-6">
-                Meine Projekte & Kalkulationen.
-              </h3>
-              <p className="text-slate-500 max-w-2xl mx-auto font-medium">
-                Hier finden Sie alle Ihre gespeicherten Projekte, Angebote und den aktuellen Status Ihrer Bauvorhaben.
-              </p>
+            <div className="bg-brand-dark rounded-[3rem] p-12 md:p-20 text-white relative overflow-hidden shadow-2xl">
+              <div className="absolute top-0 right-0 w-96 h-96 bg-brand-primary/10 rounded-full blur-3xl -mr-48 -mt-48" />
+              <div className="relative z-10 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+                <div>
+                  <h2 className="text-brand-secondary font-bold uppercase tracking-widest mb-4">Ihre Übersicht</h2>
+                  <h3 className="text-4xl md:text-5xl font-black tracking-tighter mb-6">
+                    Alle Projekte im Blick.
+                  </h3>
+                  <p className="text-white/60 text-lg font-medium mb-10 leading-relaxed">
+                    Im Kundenportal können Sie Ihre Angebote digital unterschreiben, das Bautagebuch einsehen und den Fortschritt Ihrer Projekte in Echtzeit verfolgen.
+                  </p>
+                  <Link 
+                    to="/portal" 
+                    className="inline-flex items-center gap-3 px-10 py-5 bg-brand-primary text-white rounded-2xl font-bold hover:bg-brand-secondary transition-all shadow-xl shadow-brand-primary/20 uppercase tracking-widest"
+                  >
+                    Zum Kundenportal <ChevronRight size={20} />
+                  </Link>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-white/5 backdrop-blur-md border border-white/10 p-6 rounded-3xl">
+                    <PenTool className="text-brand-secondary mb-4" size={32} />
+                    <h4 className="font-bold mb-2">Digital Signieren</h4>
+                    <p className="text-xs text-white/40">Angebote mit einem Klick beauftragen.</p>
+                  </div>
+                  <div className="bg-white/5 backdrop-blur-md border border-white/10 p-6 rounded-3xl">
+                    <HardHat className="text-brand-primary mb-4" size={32} />
+                    <h4 className="font-bold mb-2">Bautagebuch</h4>
+                    <p className="text-xs text-white/40">Tägliche Updates von der Baustelle.</p>
+                  </div>
+                  <div className="bg-white/5 backdrop-blur-md border border-white/10 p-6 rounded-3xl">
+                    <FileText className="text-brand-secondary mb-4" size={32} />
+                    <h4 className="font-bold mb-2">Dokumente</h4>
+                    <p className="text-xs text-white/40">Alle Rechnungen & Pläne an einem Ort.</p>
+                  </div>
+                  <div className="bg-white/5 backdrop-blur-md border border-white/10 p-6 rounded-3xl">
+                    <Clock className="text-brand-primary mb-4" size={32} />
+                    <h4 className="font-bold mb-2">Live-Status</h4>
+                    <p className="text-xs text-white/40">Immer wissen, was gerade passiert.</p>
+                  </div>
+                </div>
+              </div>
             </div>
-            <MyProjects />
           </div>
         </section>
       )}
@@ -1552,6 +1587,7 @@ function MainSite() {
               <Link to="/impressum" className="hover:text-white transition-colors">Impressum</Link>
               <Link to="/datenschutz" className="hover:text-white transition-colors">Datenschutz</Link>
               <Link to="/agb" className="hover:text-white transition-colors">AGB</Link>
+              <Link to="/portal" className="hover:text-white transition-colors">Kundenportal</Link>
               <Link to="/admin" className="hover:text-white transition-colors">Admin</Link>
             </div>
           </div>
@@ -1667,21 +1703,47 @@ function TradeDetail({ title, desc, features }: { title: string, desc: string, f
   );
 }
 
+const getEmbedUrl = (url: string) => {
+  if (!url) return null;
+  if (url.includes('youtube.com') || url.includes('youtu.be')) {
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const match = url.match(regExp);
+    return (match && match[2].length === 11) ? `https://www.youtube.com/embed/${match[2]}` : url;
+  }
+  if (url.includes('vimeo.com')) {
+    const regExp = /vimeo\.com\/(\d+)/;
+    const match = url.match(regExp);
+    return match ? `https://player.vimeo.com/video/${match[1]}` : url;
+  }
+  return null;
+};
+
 function GalleryImage({ src, className, alt = "Gallery", type = 'image' }: { src: string, className?: string, alt?: string, type?: 'image' | 'video' }) {
+  const embedUrl = type === 'video' ? getEmbedUrl(src) : null;
+
   return (
     <motion.div 
       whileHover={{ scale: 1.02 }}
       className={`rounded-3xl overflow-hidden shadow-2xl relative ${className}`}
     >
       {type === 'video' ? (
-        <div className="w-full h-full bg-slate-900 flex items-center justify-center">
-          <video src={src} className="w-full h-full object-cover" controls />
-          <div className="absolute top-4 right-4 bg-brand-primary text-white p-2 rounded-lg">
+        <div className="w-full h-full bg-slate-900 flex items-center justify-center aspect-video">
+          {embedUrl ? (
+            <iframe 
+              src={embedUrl} 
+              className="w-full h-full border-none" 
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+              allowFullScreen
+            />
+          ) : (
+            <video src={src} className="w-full h-full object-cover" controls />
+          )}
+          <div className="absolute top-4 right-4 bg-brand-primary text-white p-2 rounded-lg pointer-events-none">
             <Video size={16} />
           </div>
         </div>
       ) : (
-        <img src={src} className="w-full h-full object-cover" alt={alt} />
+        <img src={src} className="w-full h-full object-cover" alt={alt} referrerPolicy="no-referrer" />
       )}
     </motion.div>
   );

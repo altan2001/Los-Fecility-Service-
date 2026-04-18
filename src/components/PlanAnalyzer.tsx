@@ -108,36 +108,48 @@ export default function PlanAnalyzer({ onApplyResults }: PlanAnalyzerProps) {
                 },
               },
               {
-                text: `Analysiere diesen Grundriss/Bauplan hochpräzise. 
+                text: `Analysiere diesen Grundriss/Bauplan mit höchster Präzision. 
                 Referenz für den Maßstab: Eine ${scaleReference.object} entspricht ca. ${scaleReference.length}m.
                 
                 Aufgaben:
-                1. Identifiziere alle Räume und gib für jeden Raum eine Bounding Box im Format [ymin, xmin, ymax, xmax] an (normalisiert auf 0-1000).
-                2. Berechne Fläche (m²) und Umfang (lfm) basierend auf der Maßstabsreferenz.
-                3. Erkenne Besonderheiten (Fenster, Türen, Heizkörper, Steckdosen).
-                4. Schlage passende Handwerksleistungen vor.
+                1. Identifiziere ALLE Räume (auch Flure, Bäder, Abstellräume).
+                2. Gib für jeden Raum eine exakte Bounding Box im Format [ymin, xmin, ymax, xmax] an (normalisiert auf 0-1000).
+                3. Berechne die Netto-Grundfläche (m²) und den Umfang (lfm) basierend auf der Maßstabsreferenz.
+                4. Erkenne spezifische Bauelemente pro Raum:
+                   - Anzahl und Typ der Fenster (z.B. "2x Standardfenster", "1x Bodentiefes Fenster")
+                   - Anzahl der Türen
+                   - Sanitärobjekte (Waschbecken, WC, Dusche, Badewanne)
+                   - Heizkörper oder Fußbodenheizungs-Verteiler
+                   - Steckdosen und Lichtauslässe (wo erkennbar)
+                5. Schlage detaillierte Handwerksleistungen vor, die für diesen Raumtyp typisch sind (z.B. Fliesenleger für Bad, Parkett für Wohnzimmer).
                 
                 Gib das Ergebnis als valides JSON-Objekt zurück:
                 {
                   "rooms": [
                     { 
-                      "name": "Wohnzimmer", 
-                      "area": 25.5, 
-                      "perimeter": 20.0, 
-                      "box": [100, 100, 400, 500],
-                      "features": ["3 Fenster", "1 Balkontür", "5 Steckdosen"],
+                      "name": "Badezimmer", 
+                      "area": 8.5, 
+                      "perimeter": 12.0, 
+                      "box": [200, 300, 400, 450],
+                      "features": ["1 Fenster", "1 Dusche", "1 WC", "1 Waschbecken", "Fußbodenheizung"],
                       "suggested_services": [
-                        { "trade": "Bodenleger", "service": "Parkett verlegen", "unit": "m²", "quantity": 25.5 },
-                        { "trade": "Maler", "service": "Wandanstrich", "unit": "m²", "quantity": 60.0 }
+                        { "trade": "Fliesenleger", "service": "Bodenfliesen verlegen", "unit": "m²", "quantity": 8.5 },
+                        { "trade": "Fliesenleger", "service": "Wandfliesen (raumhoch)", "unit": "m²", "quantity": 30.0 },
+                        { "trade": "Sanitär", "service": "Montage Dusche & Armaturen", "unit": "Stk", "quantity": 1 }
                       ]
                     }
                   ],
                   "summary": {
                     "totalArea": 120.5,
-                    "totalWallLength": 85.0
+                    "totalWallLength": 85.0,
+                    "detectedElements": {
+                      "windows": 12,
+                      "doors": 8,
+                      "radiators": 6
+                    }
                   }
                 }
-                Wichtig: Antworte NUR mit dem JSON-Objekt.`,
+                Wichtig: Antworte NUR mit dem JSON-Objekt. Sei extrem präzise bei den Maßen.`,
               },
             ],
           },
