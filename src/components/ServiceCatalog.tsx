@@ -61,6 +61,7 @@ export default function ServiceCatalog({ onSelect, adminMode = false, catalog: p
   const [sortConfig, setSortConfig] = useState<{ key: 'name' | 'labor_hours' | 'material_price' | 'tradeName' | 'unit' | 'group' | null, direction: 'asc' | 'desc' }>({ key: 'group', direction: 'asc' });
   const [isLaborRatesExpanded, setIsLaborRatesExpanded] = useState(false);
   const [groupByLG, setGroupByLG] = useState(true);
+  const [groupByTrade, setGroupByTrade] = useState(false);
 
   useEffect(() => {
     if (propCatalog) {
@@ -149,7 +150,7 @@ export default function ServiceCatalog({ onSelect, adminMode = false, catalog: p
     });
   }
 
-  const trades = catalog.map(t => t.name);
+  const trades = Array.from(new Set(catalog.map(t => t.name)));
 
   const handleScrape = async () => {
     if (!scrapeUrl) return;
@@ -357,14 +358,32 @@ export default function ServiceCatalog({ onSelect, adminMode = false, catalog: p
           </div>
           {adminMode && (
             <div className="flex flex-col md:flex-row gap-4 w-full md:w-auto">
-              <button 
-                onClick={() => setGroupByLG(!groupByLG)}
-                className={`px-6 py-4 rounded-2xl font-bold text-sm transition-all border flex items-center gap-2 whitespace-nowrap ${
-                  groupByLG ? 'bg-brand-accent text-brand-primary border-brand-primary/20' : 'bg-white text-slate-400 border-slate-100'
-                }`}
-              >
-                <LayoutDashboard size={18} /> {groupByLG ? 'Gruppierung an' : 'Gruppierung aus'}
-              </button>
+              <div className="flex gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-100">
+                <button 
+                  onClick={() => { setGroupByLG(false); setGroupByTrade(false); }}
+                  className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                    !groupByLG && !groupByTrade ? 'bg-white text-brand-primary shadow-sm' : 'text-slate-400 hover:text-brand-dark'
+                  }`}
+                >
+                  Liste
+                </button>
+                <button 
+                  onClick={() => { setGroupByLG(true); setGroupByTrade(false); }}
+                  className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                    groupByLG ? 'bg-white text-brand-primary shadow-sm' : 'text-slate-400 hover:text-brand-dark'
+                  }`}
+                >
+                  Gruppen
+                </button>
+                <button 
+                  onClick={() => { setGroupByLG(false); setGroupByTrade(true); }}
+                  className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                    groupByTrade ? 'bg-white text-brand-primary shadow-sm' : 'text-slate-400 hover:text-brand-dark'
+                  }`}
+                >
+                  Gewerke
+                </button>
+              </div>
               <div className="flex bg-slate-50 rounded-2xl overflow-hidden border border-slate-100 focus-within:border-brand-primary/30 transition-all flex-1 md:w-64">
                 <input 
                   type="text" 
@@ -483,10 +502,10 @@ export default function ServiceCatalog({ onSelect, adminMode = false, catalog: p
               <tbody className="divide-y divide-slate-50">
                 {allItems.length > 0 ? (
                   (() => {
-                    if (!groupByLG) {
+                    if (!groupByLG && !groupByTrade) {
                       return allItems.map((item) => (
                         <tr 
-                          key={`${item.tradeName}-${item.id}`} 
+                          key={item.id} 
                           className="group hover:bg-brand-accent/30 transition-colors cursor-pointer"
                           onClick={() => setSelectedService(item)}
                         >
@@ -552,12 +571,15 @@ export default function ServiceCatalog({ onSelect, adminMode = false, catalog: p
                     // Grouped view
                     const groups: { [key: string]: typeof allItems } = {};
                     allItems.forEach(item => {
-                      const g = item.group || 'Allgemein';
+                      const g = groupByTrade ? item.tradeName : (item.group || 'Allgemein');
                       if (!groups[g]) groups[g] = [];
                       groups[g].push(item);
                     });
 
-                    return Object.entries(groups).map(([groupName, groupItems]) => (
+                    // Sort the groups themselves alphabetically
+                    const sortedGroupEntries = Object.entries(groups).sort(([a], [b]) => a.localeCompare(b));
+
+                    return sortedGroupEntries.map(([groupName, groupItems]) => (
                       <React.Fragment key={groupName}>
                         <tr className="bg-slate-100/50">
                           <td colSpan={adminMode ? 7 : 6} className="py-3 px-6">
@@ -570,7 +592,7 @@ export default function ServiceCatalog({ onSelect, adminMode = false, catalog: p
                         </tr>
                         {groupItems.map((item) => (
                           <tr 
-                            key={`${item.tradeName}-${item.id}`} 
+                            key={item.id} 
                             className="group hover:bg-brand-accent/30 transition-colors cursor-pointer"
                             onClick={() => setSelectedService(item)}
                           >

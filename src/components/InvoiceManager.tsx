@@ -50,6 +50,7 @@ export default function InvoiceManager() {
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [validationResult, setValidationResult] = useState<{ errors: string[], warnings: string[], isReady: boolean } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [exportingBulk, setExportingBulk] = useState(false);
   const [progressSummary, setProgressSummary] = useState<any>(null);
   const [isCalculatingProgress, setIsCalculatingProgress] = useState(false);
   const [newInvoice, setNewInvoice] = useState({
@@ -228,6 +229,41 @@ export default function InvoiceManager() {
     setShowReminderModal(true);
   };
 
+  const handleBulkExport = async () => {
+    setExportingBulk(true);
+    try {
+      // In real app, only export validated 'sent' or 'paid' invoices
+      const readyInvoices = invoices.filter(inv => inv.status !== 'draft');
+      
+      if (readyInvoices.length === 0) {
+        showNotification('Keine Rechnungen für den Export bereit.', 'error');
+        return;
+      }
+
+      for (const invoice of readyInvoices) {
+        const response = await fetch(`/api/projects/${invoice.project_id}/invoices/${invoice.id}/export-xrechnung`);
+        if (!response.ok) continue;
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', `${invoice.invoice_number}_XRechnung.xml`);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+      }
+      
+      showNotification(`${readyInvoices.length} E-Rechnungen erfolgreich exportiert.`, 'success');
+    } catch (error) {
+      console.error("Bulk export error:", error);
+      showNotification("Fehler beim Bulk-Export der E-Rechnungen.", 'error');
+    } finally {
+      setExportingBulk(false);
+    }
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'paid': return 'bg-emerald-100 text-emerald-600';
@@ -288,6 +324,14 @@ export default function InvoiceManager() {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <button 
+              onClick={handleBulkExport}
+              disabled={exportingBulk}
+              className="bg-emerald-50 text-emerald-600 px-6 py-3 rounded-2xl font-bold hover:bg-emerald-100 transition-all flex items-center gap-2 text-sm uppercase tracking-widest border border-emerald-100"
+            >
+              <Download size={18} />
+              {exportingBulk ? 'Exportiere...' : 'E-Rechnung Bulk'}
+            </button>
             {selectedProject && (
               <>
                 <button 

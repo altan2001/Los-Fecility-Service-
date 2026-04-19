@@ -788,6 +788,18 @@ async function startServer() {
     }
   });
 
+  app.delete("/api/projects/:id/diaries/:diaryId", async (req, res) => {
+    const { id, diaryId } = req.params;
+    try {
+      // In a real app, delete subcollections (presence, attachments) too.
+      await deleteDoc(doc(firestore, `projects/${id}/diaries`, diaryId));
+      res.json({ success: true });
+    } catch (err) {
+      console.error("Error deleting diary:", err);
+      res.status(500).json({ success: false, message: "Tagebucheintrag konnte nicht gelöscht werden." });
+    }
+  });
+
   app.get("/api/projects/:projectId/diaries/:diaryId/attachments", async (req, res) => {
     const { projectId, diaryId } = req.params;
     try {

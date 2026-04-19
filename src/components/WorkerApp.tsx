@@ -14,15 +14,19 @@ import {
   X,
   Play,
   Square as StopSquare,
-  UserCheck
+  UserCheck,
+  Navigation
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, onSnapshot, query, orderBy, addDoc, doc, updateDoc, where } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, addDoc, doc, updateDoc, where, serverTimestamp } from 'firebase/firestore';
+import { useAuth } from '../App';
+import ProjectChat from './ProjectChat';
 
 interface Task {
   id: string;
   project_id: string;
+  project_name?: string;
   title: string;
   description: string;
   status: 'todo' | 'in_progress' | 'done';
@@ -41,60 +45,46 @@ interface SafetyBriefing {
 }
 
 export default function WorkerApp() {
+  const { user } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [briefings, setBriefings] = useState<SafetyBriefing[]>([]);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [isTracking, setIsTracking] = useState(false);
   const [timeElapsed, setTimeElapsed] = useState(0);
   const [showSafetyModal, setShowSafetyModal] = useState(false);
-  const [selectedBriefing, setSelectedBriefing] = useState<SafetyBriefing | null>(null);
+  const [showChatModal, setShowChatModal] = useState(false);
+  const [location, setLocation] = useState<{ lat: number, lng: number } | null>(null);
+  const [isLocating, setIsLocating] = useState(false);
 
   useEffect(() => {
-    // Mock tasks for now - in real app fetch from Firestore
-    const mockTasks: Task[] = [
-      {
-        id: '1',
-        project_id: 'p1',
-        title: 'Wand verputzen - Wohnzimmer',
-        description: 'Gipsputz auftragen, Q3 Qualität',
-        status: 'todo',
-        priority: 'high',
-        assigned_to: 'Max Mustermann',
-        due_date: new Date().toISOString(),
-        created_at: new Date().toISOString()
-      },
-      {
-        id: '2',
-        project_id: 'p1',
-        title: 'Materialprüfung - Fliesen',
-        description: 'Lieferung auf Schäden prüfen',
-        status: 'in_progress',
-        priority: 'medium',
-        assigned_to: 'Max Mustermann',
-        due_date: new Date().toISOString(),
-        created_at: new Date().toISOString()
-      }
-    ];
-    setTasks(mockTasks);
+    if (!user) return;
 
-    const mockBriefings: SafetyBriefing[] = [
-      {
-        id: 'b1',
-        title: 'Arbeiten auf Gerüsten',
-        content: 'Sicherer Stand, PSA tragen, Absturzsicherung prüfen...',
-        date: new Date().toISOString(),
-        signed_by: []
-      },
-      {
-        id: 'b2',
-        title: 'Umgang mit Gefahrstoffen',
-        content: 'Datenblätter beachten, Belüftung sicherstellen...',
-        date: new Date().toISOString(),
-        signed_by: ['Max Mustermann']
-      }
-    ];
-    setBriefings(mockBriefings);
-  }, []);
+    // Fetch tasks assigned to the user
+    const qTasks = query(
+      collection(db, 'tasks'),
+      where('assigned_to', '==', user.uid),
+      orderBy('due_date', 'asc')
+    );
+
+    const unsubscribeTasks = onSnapshot(qTasks, (snapshot) => {
+      setTasks(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Task)));
+    });
+
+    // Fetch briefings
+    const qBriefings = query(
+      collection(db, 'safety_briefings'),
+      orderBy('date', 'desc')
+    );
+
+    const unsubscribeBriefings = onSnapshot(qBriefings, (snapshot) => {
+      setBriefings(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SafetyBriefing)));
+    });
+
+    return () => {
+      unsubscribeTasks();
+      unsubscribeBriefings();
+    };
+  }, [user]);
 
   useEffect(() => {
     let interval: any;
@@ -106,18 +96,70 @@ export default function WorkerApp() {
     return () => clearInterval(interval);
   }, [isTracking]);
 
+  const handleStartArbeit = () => {
+    setIsLocating(true);
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition((position) => {
+        setLocation({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude
+        });
+        setIsTracking(true);
+        setIsLocating(false);
+      }, (error) => {
+        console.error("Location error:", error);
+        setIsTracking(true); // Still start even if location fails
+        setIsLocating(false);
+      });
+    } else {
+      setIsTracking(true);
+      setIsLocating(false);
+    }
+  };
+
+  const handleStopArbeit = async () => {
+    if (!user) return;
+    
+    // Save time entry to Firestore
+    try {
+      await addDoc(collection(db, 'time_entries'), {
+        worker_id: user.uid,
+        worker_name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.email,
+        duration_seconds: timeElapsed,
+        lat: location?.lat || null,
+        lng: location?.lng || null,
+        timestamp: serverTimestamp(),
+        project_id: activeTask?.project_id || 'general'
+      });
+      
+      setIsTracking(false);
+      setTimeElapsed(0);
+      setLocation(null);
+    } catch (err) {
+      console.error('Error saving time entry:', err);
+    }
+  };
+
+  const handleSignBriefing = async (briefingId: string) => {
+    if (!user) return;
+    try {
+      const briefingRef = doc(db, 'safety_briefings', briefingId);
+      const briefing = briefings.find(b => b.id === briefingId);
+      if (briefing) {
+        await updateDoc(briefingRef, {
+          signed_by: [...briefing.signed_by, user.uid]
+        });
+      }
+    } catch (err) {
+      console.error('Error signing briefing:', err);
+    }
+  };
+
   const formatTime = (seconds: number) => {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = seconds % 60;
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  };
-
-  const handleSignBriefing = (id: string) => {
-    setBriefings(prev => prev.map(b => 
-      b.id === id ? { ...b, signed_by: [...b.signed_by, 'Max Mustermann'] } : b
-    ));
-    setShowSafetyModal(false);
   };
 
   return (
@@ -130,8 +172,8 @@ export default function WorkerApp() {
               <UserCheck size={28} />
             </div>
             <div>
-              <h3 className="text-xl font-black tracking-tight">Max Mustermann</h3>
-              <p className="text-xs font-bold text-white/40 uppercase tracking-widest">Geselle • Maler & Lackierer</p>
+              <h3 className="text-xl font-black tracking-tight">{user?.first_name} {user?.last_name || 'Mitarbeiter'}</h3>
+              <p className="text-xs font-bold text-white/40 uppercase tracking-widest">{user?.role || 'Fachkraft'}</p>
             </div>
           </div>
           <button className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center hover:bg-white/10 transition-all">
@@ -148,15 +190,28 @@ export default function WorkerApp() {
             </div>
             <span className="text-2xl font-black font-mono">{formatTime(timeElapsed)}</span>
           </div>
+          
+          {location && (
+            <div className="flex items-center gap-2 mb-4 bg-emerald-500/20 px-3 py-1.5 rounded-lg border border-emerald-500/30">
+              <Navigation size={12} className="text-emerald-400" />
+              <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Standort erfasst: {location.lat.toFixed(4)}, {location.lng.toFixed(4)}</span>
+            </div>
+          )}
+
           <button 
-            onClick={() => setIsTracking(!isTracking)}
+            onClick={isTracking ? handleStopArbeit : handleStartArbeit}
+            disabled={isLocating}
             className={`w-full py-4 rounded-2xl font-black uppercase tracking-widest text-sm flex items-center justify-center gap-3 transition-all ${
               isTracking 
                 ? 'bg-red-500 text-white shadow-lg shadow-red-500/20' 
                 : 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20'
-            }`}
+            } disabled:opacity-50`}
           >
-            {isTracking ? (
+            {isLocating ? (
+              <span className="flex items-center gap-2">
+                <Clock className="animate-spin" size={20} /> Ortung...
+              </span>
+            ) : isTracking ? (
               <>
                 <StopSquare size={20} fill="currentColor" />
                 Stop & Buchen
@@ -195,7 +250,7 @@ export default function WorkerApp() {
                 </div>
                 <div>
                   <h5 className="font-bold text-brand-dark">{task.title}</h5>
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Projekt: Neubau Müller</p>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Projekt: {task.project_name || 'Unbekannt'}</p>
                 </div>
               </div>
               <ChevronRight size={20} className="text-slate-300 group-hover:text-brand-primary transition-colors" />
@@ -232,7 +287,10 @@ export default function WorkerApp() {
         <button className="w-12 h-12 bg-white/10 text-white rounded-full flex items-center justify-center hover:bg-white/20 transition-all">
           <Camera size={20} />
         </button>
-        <button className="w-12 h-12 bg-white/10 text-white rounded-full flex items-center justify-center hover:bg-white/20 transition-all">
+        <button 
+          onClick={() => setShowChatModal(true)}
+          className="w-12 h-12 bg-white/10 text-white rounded-full flex items-center justify-center hover:bg-white/20 transition-all"
+        >
           <MessageSquare size={20} />
         </button>
         <button className="w-12 h-12 bg-white/10 text-white rounded-full flex items-center justify-center hover:bg-white/20 transition-all">
@@ -243,6 +301,30 @@ export default function WorkerApp() {
           Rapportzettel
         </button>
       </div>
+
+      {/* Chat Modal */}
+      <AnimatePresence>
+        {showChatModal && (
+          <div className="fixed inset-0 bg-brand-dark/60 backdrop-blur-sm z-50 flex items-end justify-center">
+            <motion.div 
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              className="bg-white w-full rounded-t-[3rem] shadow-2xl pb-10 max-h-[90vh] overflow-hidden flex flex-col"
+            >
+              <div className="p-8 pb-2 flex justify-between items-center">
+                <h3 className="text-2xl font-black text-brand-dark tracking-tighter">Team Chat</h3>
+                <button onClick={() => setShowChatModal(false)} className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-400">
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="flex-1 overflow-hidden">
+                <ProjectChat projectId={activeTask?.project_id || 'general'} />
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Safety Briefing Modal */}
       <AnimatePresence>
@@ -263,17 +345,17 @@ export default function WorkerApp() {
 
               <div className="space-y-6 mb-12">
                 {briefings.map(b => (
-                  <div key={b.id} className={`p-6 rounded-3xl border ${b.signed_by.includes('Max Mustermann') ? 'bg-slate-50 border-slate-100 opacity-60' : 'bg-amber-50 border-amber-100'}`}>
+                  <div key={b.id} className={`p-6 rounded-3xl border ${b.signed_by.includes(user?.uid || '') ? 'bg-slate-50 border-slate-100 opacity-60' : 'bg-amber-50 border-amber-100'}`}>
                     <div className="flex items-center justify-between mb-4">
                       <h4 className="font-black text-brand-dark">{b.title}</h4>
-                      {b.signed_by.includes('Max Mustermann') ? (
+                      {b.signed_by.includes(user?.uid || '') ? (
                         <CheckCircle2 className="text-emerald-500" size={20} />
                       ) : (
                         <span className="text-[10px] font-black bg-amber-500 text-white px-3 py-1 rounded-full uppercase tracking-widest">Fällig</span>
                       )}
                     </div>
                     <p className="text-sm text-slate-600 mb-6 leading-relaxed">{b.content}</p>
-                    {!b.signed_by.includes('Max Mustermann') && (
+                    {!(b.signed_by.includes(user?.uid || '')) && (
                       <button 
                         onClick={() => handleSignBriefing(b.id)}
                         className="w-full py-4 bg-brand-dark text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl shadow-brand-dark/20"

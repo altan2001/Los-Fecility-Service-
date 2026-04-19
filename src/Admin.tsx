@@ -12,6 +12,7 @@ import {
   Edit3,
   Check,
   X,
+  Box,
   ChevronRight,
   Lock,
   Download,
@@ -51,6 +52,7 @@ import DatanormImport from './components/DatanormImport';
 import DefectManager from './components/DefectManager';
 import DocumentManager from './components/DocumentManager';
 import WorkerApp from './components/WorkerApp';
+import BimViewer from './components/BimViewer';
 
 const getEmbedUrl = (url: string) => {
   if (!url) return null;
@@ -84,12 +86,16 @@ export type MediaItem = {
   sort_order: number;
 };
 
-export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashboard' | 'projects_visual' | 'customers' | 'content' | 'media' | 'settings' | 'calc' | 'quotes' | 'rates' | 'diaries' | 'change-orders' | 'invoices' | 'resources' | 'reports' | 'projects' | 'sketches' | 'catalog' | 'users' | 'defects' | 'documents' | 'worker-app' }) {
+export default function Admin({ activeTabDefault, catalogSubTabDefault, calcSubTabDefault }: { 
+  activeTabDefault?: 'dashboard' | 'projects_visual' | 'customers' | 'content' | 'media' | 'settings' | 'calc' | 'quotes' | 'rates' | 'diaries' | 'change-orders' | 'invoices' | 'resources' | 'reports' | 'projects' | 'sketches' | 'catalog' | 'users' | 'defects' | 'documents' | 'worker-app' | 'bim',
+  catalogSubTabDefault?: 'services' | 'trades',
+  calcSubTabDefault?: 'trades' | 'rates'
+}) {
   const { user, isAdmin, permissions, loading: authLoading, handleLogin, handleLogout } = useAuth();
   const [userProfile, setUserProfile] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [ratesSearchTerm, setRatesSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'projects_visual' | 'customers' | 'content' | 'media' | 'settings' | 'calc' | 'quotes' | 'rates' | 'diaries' | 'change-orders' | 'invoices' | 'resources' | 'reports' | 'projects' | 'sketches' | 'catalog' | 'users' | 'defects' | 'documents' | 'worker-app'>(activeTabDefault || 'dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'projects_visual' | 'customers' | 'content' | 'media' | 'settings' | 'calc' | 'quotes' | 'rates' | 'diaries' | 'change-orders' | 'invoices' | 'resources' | 'reports' | 'projects' | 'sketches' | 'catalog' | 'users' | 'defects' | 'documents' | 'worker-app' | 'bim'>(activeTabDefault || 'catalog');
   
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
@@ -119,8 +125,8 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
   const [roles, setRoles] = useState<any[]>([]);
   const [usersList, setUsersList] = useState<any[]>([]);
   const [showRolesManager, setShowRolesManager] = useState(false);
-  const [calcSubTab, setCalcSubTab] = useState<'trades' | 'rates'>('trades');
-  const [catalogSubTab, setCatalogSubTab] = useState<'services' | 'trades'>('services');
+  const [calcSubTab, setCalcSubTab] = useState<'trades' | 'rates'>(calcSubTabDefault || 'trades');
+  const [catalogSubTab, setCatalogSubTab] = useState<'services' | 'trades'>(catalogSubTabDefault || 'services');
 
   const hasPermission = (module: string, action: 'view' | 'edit' | 'delete' = 'view') => {
     if (!permissions) return true; // Default for super admin
@@ -356,16 +362,32 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
     try {
       const res = await fetch('/api/catalog');
       const data = await res.json();
-      setCatalog(data);
+      if (Array.isArray(data)) {
+        // Unique by id
+        const uniqueCatalog = data.filter((t: any, index: number, self: any[]) => 
+          index === self.findIndex((tr: any) => tr.id === t.id)
+        );
+        setCatalog(uniqueCatalog);
+      }
     } catch (err) {
       console.error('Error fetching catalog:', err);
     }
   };
 
   const fetchTrades = async () => {
-    const res = await fetch('/api/trades');
-    const data = await res.json();
-    setTrades(data);
+    try {
+      const res = await fetch('/api/trades');
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        // Unique by id
+        const uniqueTrades = data.filter((t: any, index: number, self: any[]) => 
+          index === self.findIndex((tr: any) => tr.id === t.id)
+        );
+        setTrades(uniqueTrades);
+      }
+    } catch (err) {
+      console.error('Error fetching trades:', err);
+    }
   };
 
   const fetchAllLaborRates = async () => {
@@ -969,6 +991,13 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
                 onClick={() => setActiveTab('worker-app')}
                 icon={<HardHat size={20} />}
                 label="Mitarbeiter-App"
+              />
+              <SidebarLink 
+                id="admin-sidebar-bim"
+                active={activeTab === 'bim'} 
+                onClick={() => setActiveTab('bim')}
+                icon={<Box size={20} />}
+                label="BIM / 3D Modell"
               />
             </>
           )}
@@ -2542,6 +2571,12 @@ export default function Admin({ activeTabDefault }: { activeTabDefault?: 'dashbo
           {activeTab === 'worker-app' && (
             <motion.div key="worker-app" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
               <WorkerApp />
+            </motion.div>
+          )}
+
+          {activeTab === 'bim' && (
+            <motion.div key="bim" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="h-[calc(100vh-200px)]">
+              <BimViewer />
             </motion.div>
           )}
 

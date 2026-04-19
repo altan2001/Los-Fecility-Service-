@@ -248,8 +248,8 @@ export default function App() {
         <Router>
           {customCss && <style dangerouslySetInnerHTML={{ __html: customCss }} />}
           <Routes>
-            <Route path="/admin" element={<Admin activeTabDefault="quotes" />} />
-            <Route path="/pricing" element={<Pricing />} />
+            <Route path="/admin/catalog" element={<Admin activeTabDefault="catalog" />} />
+            <Route path="/admin/trades" element={<Admin activeTabDefault="catalog" catalogSubTabDefault="trades" />} />
             <Route path="/admin/quotes" element={<Admin activeTabDefault="quotes" />} />
             <Route path="/admin/rates" element={<Admin activeTabDefault="rates" />} />
             <Route path="/portal" element={<CustomerPortal />} />
@@ -828,13 +828,22 @@ function MainSite() {
                     </Link>
                   )}
                   {isAdmin && (
-                    <Link 
-                      to="/admin" 
-                      className="text-xs md:text-sm font-bold px-3 py-1.5 md:px-4 md:py-2 bg-brand-dark text-white rounded-lg hover:bg-brand-primary transition-all flex items-center gap-2"
-                    >
-                      <LayoutDashboard size={14} className="hidden md:block" />
-                      Admin
-                    </Link>
+                    <div className="flex items-center gap-2">
+                      <Link 
+                        to="/admin/catalog" 
+                        className="hidden xl:flex items-center gap-2 text-xs font-bold px-3 py-1.5 bg-brand-primary/10 text-brand-primary rounded-lg hover:bg-brand-primary hover:text-white transition-all border border-brand-primary/20"
+                      >
+                        <PenTool size={12} />
+                        Leistungen
+                      </Link>
+                      <Link 
+                        to="/admin" 
+                        className="text-xs md:text-sm font-bold px-3 py-1.5 md:px-4 md:py-2 bg-brand-dark text-white rounded-lg hover:bg-brand-primary transition-all flex items-center gap-2"
+                      >
+                        <LayoutDashboard size={14} className="hidden md:block" />
+                        Admin
+                      </Link>
+                    </div>
                   )}
                   <button 
                     onClick={handleLogout} 
@@ -980,6 +989,7 @@ function MainSite() {
                 src="https://images.unsplash.com/photo-1581094794329-c8112a89af12?auto=format&fit=crop&q=80" 
                 className="w-full h-full object-cover"
                 alt="Construction worker"
+                referrerPolicy="no-referrer"
               />
             </div>
             {/* Floating Stats */}
@@ -1080,7 +1090,7 @@ function MainSite() {
               title="Bausanierung & Modernisierung"
               desc="Wir verwandeln alte Bausubstanz in moderne Lebensräume. Von der Entkernung bis zum Finish."
               items={["Komplette Kernsanierung", "Feuchtigkeitsschutz", "Energetische Sanierung"]}
-              img="https://images.unsplash.com/photo-1541888946425-d81bb19480c5?auto=format&fit=crop&q=80"
+              img="https://images.unsplash.com/photo-1503387762-592dee58c460?auto=format&fit=crop&q=80"
               icon={<Hammer size={24} className="text-brand-primary" />}
             />
             <ServiceCard 
@@ -1088,7 +1098,7 @@ function MainSite() {
               title="Wasserinstallation"
               desc="Präzise Installationen für Bad und Küche."
               items={["Neuinstallation", "Sanitär-Sanierung", "Armaturen"]}
-              img="https://images.unsplash.com/photo-1585704032915-c3400ca1f963?auto=format&fit=crop&q=80"
+              img="https://images.unsplash.com/photo-1584622781564-1d9876aa3b71?auto=format&fit=crop&q=80"
               icon={<Droplets size={24} className="text-brand-secondary" />}
             />
             <ServiceCard 
@@ -1096,7 +1106,7 @@ function MainSite() {
               title="Flüssigboden"
               desc="Die innovative Lösung für perfekte Böden."
               items={["Fugenlos", "Hygienisch", "Langlebig"]}
-              img="https://images.unsplash.com/photo-1531834685032-c34bfad1f902?auto=format&fit=crop&q=80"
+              img="https://images.unsplash.com/photo-1533154683836-84ea7a0bc310?auto=format&fit=crop&q=80"
               icon={<Layers size={24} className="text-brand-primary" />}
             />
             <ServiceCard 
@@ -1323,12 +1333,12 @@ function MainSite() {
               ))
             ) : (
               <>
-                <GalleryImage src="https://images.unsplash.com/photo-1541888946425-d81bb19480c5?auto=format&fit=crop&q=80" alt="Bausanierung" />
-                <GalleryImage src="https://images.unsplash.com/photo-1585704032915-c3400ca1f963?auto=format&fit=crop&q=80" className="md:row-span-2" alt="Wasserinstallation" />
-                <GalleryImage src="https://images.unsplash.com/photo-1531834685032-c34bfad1f902?auto=format&fit=crop&q=80" alt="Flüssigboden" />
-                <GalleryImage src="https://images.unsplash.com/photo-1517581177682-a085bb7ffb15?auto=format&fit=crop&q=80" alt="Trockenbau" />
+                <GalleryImage src="https://images.unsplash.com/photo-1503387762-592dee58c460?auto=format&fit=crop&q=80" alt="Bausanierung" />
+                <GalleryImage src="https://images.unsplash.com/photo-1581094794329-c8112a89af12?auto=format&fit=crop&q=80" className="md:row-span-2" alt="Wasserinstallation" />
+                <GalleryImage src="https://images.unsplash.com/photo-1517581177682-a085bb7ffb15?auto=format&fit=crop&q=80" alt="Flüssigboden" />
+                <GalleryImage src="https://images.unsplash.com/photo-1541888946425-d81bb19480c5?auto=format&fit=crop&q=80" alt="Trockenbau" />
                 <GalleryImage src="https://images.unsplash.com/photo-1589939705384-5185138a047a?auto=format&fit=crop&q=80" alt="Malerarbeiten" />
-                <GalleryImage src="https://images.unsplash.com/photo-1503387762-592dee58c460?auto=format&fit=crop&q=80" alt="Sanierung" />
+                <GalleryImage src="https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&q=80" alt="Sanierung" />
                 <GalleryImage src="https://images.unsplash.com/photo-1584622650111-993a426fbf0a?auto=format&fit=crop&q=80" alt="Badezimmer" />
                 <GalleryImage src="https://images.unsplash.com/photo-1530124560676-1adc4220aaad?auto=format&fit=crop&q=80" alt="Werkzeuge" />
               </>
@@ -1345,35 +1355,59 @@ function MainSite() {
             <h3 className="text-4xl md:text-5xl font-black text-brand-dark tracking-tighter">Werden Sie Teil unseres Teams.</h3>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
-              <div className="w-12 h-12 bg-brand-primary/10 text-brand-primary rounded-xl flex items-center justify-center mb-6">
-                <HardHat size={24} />
+            <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow relative overflow-hidden group">
+              <img 
+                src="https://images.unsplash.com/photo-1581578731522-34024b434b21?auto=format&fit=crop&q=80" 
+                className="absolute inset-0 w-full h-full object-cover opacity-10 group-hover:opacity-20 transition-opacity" 
+                alt="SHK"
+                referrerPolicy="no-referrer"
+              />
+              <div className="relative z-10">
+                <div className="w-12 h-12 bg-brand-primary/10 text-brand-primary rounded-xl flex items-center justify-center mb-6">
+                  <HardHat size={24} />
+                </div>
+                <h4 className="text-xl font-bold text-brand-dark mb-2">Anlagenmechaniker SHK (m/w/d)</h4>
+                <p className="text-slate-500 text-sm mb-6">Für unsere Projekte im Bereich Wasser- und Heizungsinstallation.</p>
+                <a href="#kontakt" className="text-brand-primary font-bold flex items-center gap-2 hover:gap-3 transition-all">
+                  Jetzt bewerben <ArrowRight size={16} />
+                </a>
               </div>
-              <h4 className="text-xl font-bold text-brand-dark mb-2">Anlagenmechaniker SHK (m/w/d)</h4>
-              <p className="text-slate-500 text-sm mb-6">Für unsere Projekte im Bereich Wasser- und Heizungsinstallation.</p>
-              <a href="#kontakt" className="text-brand-primary font-bold flex items-center gap-2 hover:gap-3 transition-all">
-                Jetzt bewerben <ArrowRight size={16} />
-              </a>
             </div>
-            <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
-              <div className="w-12 h-12 bg-brand-secondary/10 text-brand-secondary rounded-xl flex items-center justify-center mb-6">
-                <Paintbrush size={24} />
+            <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow relative overflow-hidden group">
+              <img 
+                src="https://images.unsplash.com/photo-1589939705384-5185138a047a?auto=format&fit=crop&q=80" 
+                className="absolute inset-0 w-full h-full object-cover opacity-10 group-hover:opacity-20 transition-opacity" 
+                alt="Maler"
+                referrerPolicy="no-referrer"
+              />
+              <div className="relative z-10">
+                <div className="w-12 h-12 bg-brand-secondary/10 text-brand-secondary rounded-xl flex items-center justify-center mb-6">
+                  <Paintbrush size={24} />
+                </div>
+                <h4 className="text-xl font-bold text-brand-dark mb-2">Maler & Lackierer (m/w/d)</h4>
+                <p className="text-slate-500 text-sm mb-6">Kreative Köpfe für hochwertige Wandgestaltung und Fassaden.</p>
+                <a href="#kontakt" className="text-brand-primary font-bold flex items-center gap-2 hover:gap-3 transition-all">
+                  Jetzt bewerben <ArrowRight size={16} />
+                </a>
               </div>
-              <h4 className="text-xl font-bold text-brand-dark mb-2">Maler & Lackierer (m/w/d)</h4>
-              <p className="text-slate-500 text-sm mb-6">Kreative Köpfe für hochwertige Wandgestaltung und Fassaden.</p>
-              <a href="#kontakt" className="text-brand-primary font-bold flex items-center gap-2 hover:gap-3 transition-all">
-                Jetzt bewerben <ArrowRight size={16} />
-              </a>
             </div>
-            <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
-              <div className="w-12 h-12 bg-brand-primary/10 text-brand-primary rounded-xl flex items-center justify-center mb-6">
-                <Hammer size={24} />
+            <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow relative overflow-hidden group">
+              <img 
+                src="https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&q=80" 
+                className="absolute inset-0 w-full h-full object-cover opacity-10 group-hover:opacity-20 transition-opacity" 
+                alt="Trockenbau"
+                referrerPolicy="no-referrer"
+              />
+              <div className="relative z-10">
+                <div className="w-12 h-12 bg-brand-primary/10 text-brand-primary rounded-xl flex items-center justify-center mb-6">
+                  <Hammer size={24} />
+                </div>
+                <h4 className="text-xl font-bold text-brand-dark mb-2">Trockenbaumonteur (m/w/d)</h4>
+                <p className="text-slate-500 text-sm mb-6">Spezialisten für modernen Innenausbau und Akustik.</p>
+                <a href="#kontakt" className="text-brand-primary font-bold flex items-center gap-2 hover:gap-3 transition-all">
+                  Jetzt bewerben <ArrowRight size={16} />
+                </a>
               </div>
-              <h4 className="text-xl font-bold text-brand-dark mb-2">Trockenbaumonteur (m/w/d)</h4>
-              <p className="text-slate-500 text-sm mb-6">Spezialisten für modernen Innenausbau und Akustik.</p>
-              <a href="#kontakt" className="text-brand-primary font-bold flex items-center gap-2 hover:gap-3 transition-all">
-                Jetzt bewerben <ArrowRight size={16} />
-              </a>
             </div>
           </div>
         </div>
@@ -1754,19 +1788,20 @@ function ServiceCard({ title, desc, items, img, icon, className }: { title: stri
     <motion.div 
       whileHover={{ y: -12, scale: 1.02 }}
       transition={{ type: "spring", stiffness: 400, damping: 17 }}
-      className={`relative group rounded-[2.5rem] overflow-hidden min-h-[400px] shadow-xl hover:shadow-[0_35px_60px_-15px_rgba(0,0,0,0.3)] transition-all duration-500 ${className}`}
+      className={`group rounded-[2.5rem] overflow-hidden shadow-xl hover:shadow-[0_35px_60px_-15px_rgba(0,0,0,0.3)] transition-all duration-500 bg-white border border-slate-100 flex flex-col md:flex-row ${className}`}
     >
-      <img src={img} className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" alt={title} />
-      <div className="absolute inset-0 bg-gradient-to-t from-brand-dark via-brand-dark/40 to-transparent" />
-      <div className="absolute inset-0 p-10 flex flex-col justify-end text-white">
-        <div className="w-12 h-12 bg-brand-primary rounded-xl flex items-center justify-center mb-6 shadow-lg">
+      <div className="md:w-1/2 relative h-64 md:h-auto overflow-hidden">
+        <img src={img} className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" alt={title} referrerPolicy="no-referrer" />
+      </div>
+      <div className="md:w-1/2 p-8 md:p-10 flex flex-col justify-center">
+        <div className="w-12 h-12 bg-brand-primary/10 text-brand-primary rounded-xl flex items-center justify-center mb-6 shadow-sm">
           {icon}
         </div>
-        <h4 className="text-3xl font-black tracking-tighter mb-4">{title}</h4>
-        <p className="text-white/70 font-medium mb-6 line-clamp-2 group-hover:line-clamp-none transition-all">{desc}</p>
-        <ul className="flex flex-wrap gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-500">
+        <h4 className="text-3xl font-black tracking-tighter mb-4 text-brand-dark">{title}</h4>
+        <p className="text-slate-500 font-medium mb-6 leading-relaxed">{desc}</p>
+        <ul className="flex flex-wrap gap-2">
           {items.map((item, i) => (
-            <li key={i} className="px-3 py-1 bg-white/10 backdrop-blur-md rounded-full text-[10px] font-bold uppercase tracking-widest">
+            <li key={i} className="px-3 py-1 bg-brand-accent text-brand-primary rounded-full text-[10px] font-bold uppercase tracking-widest">
               {item}
             </li>
           ))}
@@ -1792,7 +1827,7 @@ function ProjectCard({ img, title, category }: { img: string, title: string, cat
   return (
     <motion.div whileHover={{ y: -10 }} className="group cursor-pointer">
       <div className="rounded-[2.5rem] overflow-hidden aspect-square mb-6 shadow-xl shadow-brand-dark/5">
-        <img src={img} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" alt={title} />
+        <img src={img} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" alt={title} referrerPolicy="no-referrer" />
       </div>
       <p className="text-xs font-bold text-brand-primary uppercase tracking-widest mb-2">{category}</p>
       <h4 className="text-2xl font-black text-brand-dark tracking-tighter">{title}</h4>

@@ -266,6 +266,21 @@ export default function ConstructionDiary({ initialProjectId }: { initialProject
     setPresenceList(presenceList.filter((_, i) => i !== index));
   };
 
+  const handleDeleteDiary = async (diaryId: string) => {
+    if (!confirm('Diesen Tagebucheintrag wirklich löschen?') || !selectedProject) return;
+    try {
+      const res = await fetch(`/api/projects/${selectedProject}/diaries/${diaryId}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        fetchDiaries(selectedProject);
+      } else {
+        alert(data.message || 'Fehler beim Löschen.');
+      }
+    } catch (err) {
+      console.error('Error deleting diary:', err);
+    }
+  };
+
   const fetchAttachments = async (diaryId: string) => {
     if (!selectedProject) return;
     try {
@@ -439,7 +454,11 @@ export default function ConstructionDiary({ initialProjectId }: { initialProject
                     <button className="text-slate-300 hover:text-brand-primary transition-colors">
                       <ClipboardList size={20} />
                     </button>
-                    <button className="text-slate-300 hover:text-red-500 transition-colors">
+                    <button 
+                      onClick={() => handleDeleteDiary(diary.id)}
+                      className="text-slate-300 hover:text-red-500 transition-colors"
+                      title="Löschen"
+                    >
                       <Trash2 size={20} />
                     </button>
                   </div>
